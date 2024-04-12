@@ -1,6 +1,6 @@
 use std::{env::args, thread::sleep, time::Duration};
 use enigo::{Key, KeyboardControllable, MouseButton, MouseControllable};
-use image::{DynamicImage, GenericImageView, Pixel, Rgb, imageops::resize};
+use image::{imageops::resize, DynamicImage, GenericImageView, Pixel, Rgb, Rgba};
 
 const SLEEP_TIME: Duration = Duration::from_secs(3);
 const SMALL_SLEEP_TIME: Duration = Duration::from_millis(5);
@@ -40,10 +40,10 @@ impl Artist {
     fn new(img: DynamicImage, colors: [Rgb<u8>; 20]) -> Self {
         let mut enigo = enigo::Enigo::new();
         sleep(SLEEP_TIME);
-        let (left, top) = enigo.mouse_location();
+        let (mut left, mut top) = enigo.mouse_location();
         enigo.mouse_click(MouseButton::Left);
         sleep(SLEEP_TIME);
-        let (right, bottom) = enigo.mouse_location();
+        let (mut right, mut bottom) = enigo.mouse_location();
         enigo.mouse_click(MouseButton::Left);
         sleep(SLEEP_TIME);
         let (black_x, black_y) = enigo.mouse_location();
@@ -59,6 +59,12 @@ impl Artist {
         enigo.key_click(Key::Z);
         enigo.key_click(Key::UpArrow);
         enigo.key_click(Key::Return);
+        if right < left {
+            (right, left) = (left, right);
+        }
+        if bottom < top {
+            (top, bottom) = (bottom, top);
+        }
         let painting_width = right - left;
         let painting_height = bottom - top;
         let horizontal_dots = (painting_width as f32 / DOT_WIDTH_FLOAT).ceil() as i32;
@@ -71,19 +77,27 @@ impl Artist {
         for x in 0..self.width {
             let mut line_length = 0;
             let mut line_color = self.get_color(x, 0);
-            self.select_color(line_color);
+            if line_color != 10 {
+                self.select_color(line_color);
+            }
             for y in 0..self.height {
                 let color = self.get_color(x, y);
                 if color == line_color {
                     line_length += 1;
                 } else {
-                    self.draw_line(x * DOT_WIDTH, (y - line_length) * DOT_WIDTH, x * DOT_WIDTH, y * DOT_WIDTH);
+                    if line_color != 10 {
+                        self.draw_line(x * DOT_WIDTH, (y - line_length) * DOT_WIDTH, x * DOT_WIDTH, (y - 1) * DOT_WIDTH);
+                    }
                     line_length = 1;
                     line_color = color;
-                    self.select_color(color);
+                    if line_color != 10 {
+                        self.select_color(color);
+                    }
                 }
             }
-            self.draw_line(x * DOT_WIDTH, (self.height - line_length) * DOT_WIDTH, x * DOT_WIDTH, self.height * DOT_WIDTH);
+            if line_color != 10 {
+                self.draw_line(x * DOT_WIDTH, (self.height - line_length - 1) * DOT_WIDTH, x * DOT_WIDTH, (self.height - 1) * DOT_WIDTH);
+            }
         }
     }
 
@@ -110,8 +124,12 @@ impl Artist {
     }
 
     fn get_color(&self, x: i32, y: i32) -> i32 {
-        let color: Rgb<u8> = self.img.get_pixel(x as u32, y as u32).to_rgb();
-        self.get_best_color(color)
+        let color: Rgba<u8> = self.img.get_pixel(x as u32, y as u32);
+        if color.0[3] == 0 {
+            10
+        } else {
+            self.get_best_color(color.to_rgb())
+        }
     }
 
     fn get_best_color(&self, color: Rgb<u8>) -> i32 {
