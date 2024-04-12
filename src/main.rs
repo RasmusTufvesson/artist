@@ -1,6 +1,6 @@
 use std::{env::args, thread::sleep, time::Duration};
 use enigo::{Key, KeyboardControllable, MouseButton, MouseControllable};
-use image::{DynamicImage, GenericImageView, Pixel, Rgb};
+use image::{DynamicImage, GenericImageView, Pixel, Rgb, imageops::resize};
 
 const SLEEP_TIME: Duration = Duration::from_secs(3);
 const SMALL_SLEEP_TIME: Duration = Duration::from_millis(5);
@@ -63,15 +63,16 @@ impl Artist {
         let painting_height = bottom - top;
         let horizontal_dots = (painting_width as f32 / DOT_WIDTH_FLOAT).ceil() as i32;
         let vertical_dots = (painting_height as f32 / DOT_WIDTH_FLOAT).ceil() as i32;
-        Self { enigo, img, left, top, black_x, black_y, width: horizontal_dots, height: vertical_dots, colors, selected_color: 0, canvas_selected: false }
+        let img = resize(&img, horizontal_dots as u32, vertical_dots as u32, image::imageops::FilterType::Gaussian);
+        Self { enigo, img: img.into(), left, top, black_x, black_y, width: horizontal_dots, height: vertical_dots, colors, selected_color: 0, canvas_selected: false }
     }
 
     fn paint(&mut self) {
-        for x in 0..=self.width {
+        for x in 0..self.width {
             let mut line_length = 0;
             let mut line_color = self.get_color(x, 0);
             self.select_color(line_color);
-            for y in 0..=self.height {
+            for y in 0..self.height {
                 let color = self.get_color(x, y);
                 if color == line_color {
                     line_length += 1;
@@ -108,10 +109,8 @@ impl Artist {
         self.drag(self.left + start_x, self.top + start_y, self.left + end_x, self.top + end_y);
     }
 
-    fn get_color(&mut self, x: i32, y: i32) -> i32 {
-        let img_x = (x as f32 / self.width as f32 * (self.img.width() - 1) as f32).round() as u32;
-        let img_y = (y as f32 / self.height as f32 * (self.img.height() - 1) as f32).round() as u32;
-        let color: Rgb<u8> = self.img.get_pixel(img_x, img_y).to_rgb();
+    fn get_color(&self, x: i32, y: i32) -> i32 {
+        let color: Rgb<u8> = self.img.get_pixel(x as u32, y as u32).to_rgb();
         self.get_best_color(color)
     }
 
