@@ -6,7 +6,7 @@ const SLEEP_TIME: Duration = Duration::from_secs(3);
 const SMALL_SLEEP_TIME: Duration = Duration::from_millis(5);
 const DOT_WIDTH_FLOAT: f32 = 5.;
 const DOT_WIDTH: i32 = 5;
-const COLOR_SPACING: i32 = 26;
+const COLOR_SPACING: i32 = 24;
 
 fn main() {
     let image_path = args().nth(1).expect("Specify image path");
