@@ -68,10 +68,21 @@ impl Artist {
 
     fn paint(&mut self) {
         for x in 0..=self.width {
+            let mut line_length = 0;
+            let mut line_color = self.get_color(x, 0);
+            self.select_color(line_color);
             for y in 0..=self.height {
-                self.pick_color(x, y);
-                self.draw_dot(x * DOT_WIDTH, y * DOT_WIDTH);
+                let color = self.get_color(x, y);
+                if color == line_color {
+                    line_length += 1;
+                } else {
+                    self.draw_line(x * DOT_WIDTH, (y - line_length) * DOT_WIDTH, x * DOT_WIDTH, y * DOT_WIDTH);
+                    line_length = 1;
+                    line_color = color;
+                    self.select_color(color);
+                }
             }
+            self.draw_line(x * DOT_WIDTH, (self.height - line_length) * DOT_WIDTH, x * DOT_WIDTH, self.height * DOT_WIDTH);
         }
     }
 
@@ -81,20 +92,27 @@ impl Artist {
         self.enigo.mouse_click(MouseButton::Left);
     }
 
-    fn draw_dot(&mut self, x: i32, y: i32) {
-        if !self.canvas_selected {
-            self.click(self.left + x, self.top + y);
-            self.canvas_selected = true;
-        }
-        self.click(self.left + x, self.top + y);
+    fn drag(&mut self, start_x: i32, start_y: i32, end_x: i32, end_y: i32) {
+        sleep(SMALL_SLEEP_TIME);
+        self.enigo.mouse_move_to(start_x, start_y);
+        self.enigo.mouse_down(MouseButton::Left);
+        self.enigo.mouse_move_to(end_x, end_y);
+        self.enigo.mouse_up(MouseButton::Left);
     }
 
-    fn pick_color(&mut self, x: i32, y: i32) {
+    fn draw_line(&mut self, start_x: i32, start_y: i32, end_x: i32, end_y: i32) {
+        if !self.canvas_selected {
+            self.click(self.left + start_x, self.top + start_y);
+            self.canvas_selected = true;
+        }
+        self.drag(self.left + start_x, self.top + start_y, self.left + end_x, self.top + end_y);
+    }
+
+    fn get_color(&mut self, x: i32, y: i32) -> i32 {
         let img_x = (x as f32 / self.width as f32 * (self.img.width() - 1) as f32).round() as u32;
         let img_y = (y as f32 / self.height as f32 * (self.img.height() - 1) as f32).round() as u32;
         let color: Rgb<u8> = self.img.get_pixel(img_x, img_y).to_rgb();
-        let color_index = self.get_best_color(color);
-        self.select_color(color_index);
+        self.get_best_color(color)
     }
 
     fn get_best_color(&self, color: Rgb<u8>) -> i32 {
