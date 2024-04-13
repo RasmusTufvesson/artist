@@ -149,9 +149,11 @@ impl Artist {
         }
         let background = *total_colors.iter().max_by_key(|(_, used)| **used).unwrap().0;
         let background_index = self.colors.iter().enumerate().find(|(_, x)| x == &&background).map(|(i, _)| i as i32).unwrap_or(BACKGROUND);
+        let mut draw_batches: [Vec<PaintInstruction>; 20] = Default::default();
         for x in 0..self.width {
             let mut line_length = 0;
-            let mut line_color = if let Some(color) = self.get_color(x, 0) {
+            let mut line_color = {
+                let color = self.get_color(x, 0);
                 if color == background {
                     background_index
                 } else {
@@ -171,73 +173,82 @@ impl Artist {
                         }
                         self.selected_color
                     } else {
-                        if self.selected_color != best_match && best_match != background_index {
+                        if self.selected_color != best_match && best_match != background_index && best_match >= 20 {
                             instructions.push(PaintInstruction::Color(best_match));
                             self.selected_color = best_match;
                         }
                         best_match
                     }
                 }
-            } else {
-                background_index
             };
             for y in 0..self.height {
-                if let Some(color) = self.get_color(x, y) {
-                    let (best_match, diff) = self.get_best_preset(color, background, background_index);
-                    if diff > tolerance {
-                        if line_color != background_index {
+                let color = self.get_color(x, y);
+                let (best_match, diff) = self.get_best_preset(color, background, background_index);
+                if diff > tolerance {
+                    if line_color != background_index {
+                        if line_color < 20 {
+                            draw_batches[line_color as usize].push(PaintInstruction::Line(x, y - line_length, x, y - 1));
+                        } else {
                             instructions.push(PaintInstruction::Line(x, y - line_length, x, y - 1));
                         }
-                        if color == background {
-                            line_length = 1;
-                            line_color = background_index;
-                        } else {
-                            if init_colors.len() != 10 {
-                                self.selected_color = 20 + init_colors.len() as i32;
-                                instructions.push(PaintInstruction::Color(self.selected_color));
-                                init_colors.push(color);
-                            } else {
-                                instructions.push(PaintInstruction::ColorPrecise(color));
-                                self.selected_color = 29;
-                            }
-                            self.custom_colors.push(color);
-                            if self.custom_colors.len() == 11 {
-                                self.custom_colors.remove(0);
-                            }
-                            line_length = 1;
-                            line_color = self.selected_color;
-                        }
+                    }
+                    if color == background {
+                        line_length = 1;
+                        line_color = background_index;
                     } else {
-                        if line_color == best_match {
-                            line_length += 1;
+                        if init_colors.len() != 10 {
+                            self.selected_color = 20 + init_colors.len() as i32;
+                            instructions.push(PaintInstruction::Color(self.selected_color));
+                            init_colors.push(color);
                         } else {
-                            if line_color != background_index {
+                            instructions.push(PaintInstruction::ColorPrecise(color));
+                            self.selected_color = 29;
+                        }
+                        self.custom_colors.push(color);
+                        if self.custom_colors.len() == 11 {
+                            self.custom_colors.remove(0);
+                        }
+                        line_length = 1;
+                        line_color = self.selected_color;
+                    }
+                } else {
+                    if line_color == best_match {
+                        line_length += 1;
+                    } else {
+                        if line_color != background_index {
+                            if line_color < 20 {
+                                draw_batches[line_color as usize].push(PaintInstruction::Line(x, y - line_length, x, y - 1));
+                            } else {
                                 instructions.push(PaintInstruction::Line(x, y - line_length, x, y - 1));
                             }
-                            line_length = 1;
-                            line_color = best_match;
-                            if self.selected_color != best_match && line_color != background_index {
-                                instructions.push(PaintInstruction::Color(best_match));
-                                self.selected_color = best_match;
-                            }
+                        }
+                        line_length = 1;
+                        line_color = best_match;
+                        if self.selected_color != best_match && line_color != background_index && line_color >= 20 {
+                            instructions.push(PaintInstruction::Color(best_match));
+                            self.selected_color = best_match;
                         }
                     }
-                } else if line_color != background_index {
-                    instructions.push(PaintInstruction::Line(x, y - line_length, x, y - 1));
-                    line_length = 1;
-                    line_color = background_index;
-                } else {
-                    line_length += 1;
                 }
             }
             if line_color != background_index {
-                instructions.push(PaintInstruction::Line(x, self.height - line_length, x, self.height - 1));
+                if line_color < 20 {
+                    draw_batches[line_color as usize].push(PaintInstruction::Line(x, self.height - line_length, x, self.height - 1));
+                } else {
+                    instructions.push(PaintInstruction::Line(x, self.height - line_length, x, self.height - 1));
+                }
             }
         }
         let mut final_instructions = vec![
             PaintInstruction::SelectBrush,
             PaintInstruction::SetMaxSize,
         ];
+        for (i, batch) in draw_batches.iter_mut().enumerate() {
+            if batch.len() != 0 {
+                final_instructions.push(PaintInstruction::Color(i as i32));
+                final_instructions.append(batch);
+            }
+        }
         final_instructions.append(&mut instructions);
         (final_instructions, init_colors, background)
     }
@@ -318,14 +329,14 @@ impl Artist {
         self.click(start_x, start_y - 20);
     }
 
-    fn get_color(&self, x: i32, y: i32) -> Option<Rgb<u8>> {
+    fn get_color(&self, x: i32, y: i32) -> Rgb<u8> {
         let color: Rgba<u8> = *self.img.get_pixel(x as u32, y as u32);
         if color.0[3] == 0 {
-            None
+            self.colors[10]
         } else if color.0[3] != 255 {
-            Some(blend_with_white(color))
+            blend_with_white(color)
         } else {
-            Some(color.to_rgb())
+            color.to_rgb()
         }
     }
 
@@ -360,7 +371,6 @@ impl Artist {
         let x = column * COLOR_SPACING + self.black_x;
         let y = row * COLOR_SPACING + self.black_y;
         self.click(x, y);
-        self.selected_color = color_index;
         self.canvas_selected = false;
     }
 
