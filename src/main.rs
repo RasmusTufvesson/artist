@@ -11,7 +11,8 @@ const COLOR_SPACING: i32 = 24;
 const WHITE: i32 = 10;
 
 fn main() {
-    let image_path = args().nth(1).expect("Specify image path");
+    let args: Vec<String> = args().collect();
+    let image_path = args.get(1).expect("Specify image path");
     let img = image::open(image_path).expect("Could not open image");
     let colors = [*Rgb::from_slice(&[0,0,0]), *Rgb::from_slice(&[127,127,127]), *Rgb::from_slice(&[136,0,21]),
                                   *Rgb::from_slice(&[237,28,36]), *Rgb::from_slice(&[255,127,39]), *Rgb::from_slice(&[255,242,0]),
@@ -21,7 +22,11 @@ fn main() {
                                   *Rgb::from_slice(&[239,228,176]), *Rgb::from_slice(&[181,230,29]), *Rgb::from_slice(&[153,217,234]),
                                   *Rgb::from_slice(&[112,146,190]), *Rgb::from_slice(&[200,191,231])];
     let mut artist = Artist::new(img, colors);
-    artist.paint(5.);
+    let tolerance =  match args.get(2) {
+        None => 5.,
+        Some(val) => val.parse().expect("Could not parse tolerance"),
+    };
+    artist.paint(tolerance);
 }
 
 struct Artist {
