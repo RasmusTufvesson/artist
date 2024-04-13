@@ -1,7 +1,8 @@
 use std::{collections::HashMap, env::args, thread::sleep, time::Duration};
 use device_query::{DeviceQuery, DeviceState, Keycode};
 use enigo::{Key, KeyboardControllable, MouseButton, MouseControllable};
-use image::{imageops::resize, DynamicImage, GenericImageView, Pixel, Rgb, Rgba};
+use image::{imageops::{resize, crop_imm}, DynamicImage, GenericImageView, Pixel, Rgb, Rgba};
+use xcap::Monitor;
 
 const SMALL_SLEEP_TIME: Duration = Duration::from_millis(5);
 const MEDIUM_SLEEP_TIME: Duration = Duration::from_millis(20);
@@ -27,6 +28,7 @@ fn main() {
         Some(val) => val.parse().expect("Could not parse tolerance"),
     };
     artist.paint(tolerance);
+    artist.screenshot("out.png");
 }
 
 enum PaintInstruction {
@@ -223,6 +225,13 @@ impl Artist {
         self.paint_from_preprocess(instructions, init_colors, background);
     }
 
+    fn screenshot(&self, path: &str) {
+        let monitor = Monitor::from_point(self.left, self.top).unwrap();
+        let img = monitor.capture_image().unwrap();
+        let cropped = crop_imm(&img, self.left as u32, self.top as u32, (self.width * DOT_WIDTH) as u32, (self.height * DOT_WIDTH) as u32).to_image();
+        cropped.save(path).unwrap();
+    }
+
     fn click(&mut self, x: i32, y: i32) {
         self.enigo.mouse_move_to(x, y);
         self.enigo.mouse_click(MouseButton::Left);
@@ -257,7 +266,7 @@ impl Artist {
         let (start_x, start_y) = (start_x * DOT_WIDTH + self.left + 2, start_y * DOT_WIDTH + self.top + 2);
         let (end_x, end_y) = (end_x * DOT_WIDTH + self.left, end_y * DOT_WIDTH + self.top);
         if !self.canvas_selected {
-            self.click(self.left + start_x, self.top + start_y);
+            self.click(start_x, start_y);
             self.canvas_selected = true;
         }
         self.drag(start_x, start_y, end_x, end_y);
