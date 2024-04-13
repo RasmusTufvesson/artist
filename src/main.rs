@@ -29,6 +29,12 @@ fn main() {
     artist.paint(tolerance);
 }
 
+enum PaintInstruction {
+    Line(i32, i32, i32, i32),
+    Select(i32),
+    SelectPrecise(Rgb<u8>),
+}
+
 struct Artist {
     enigo: enigo::Enigo,
     img: DynamicImage,
@@ -74,18 +80,31 @@ impl Artist {
         Self { enigo, img: img.into(), left, top, black_x, black_y, width: horizontal_dots, height: vertical_dots, colors, selected_color: 0, canvas_selected: false, custom_colors: vec![] }
     }
 
-    fn paint(&mut self, tolerance: f32) {
-        self.click(self.left, self.top);
+    fn paint_preprocess(&mut self, tolerance: f32) -> (Vec<PaintInstruction>, Vec<Rgb<u8>>) {
+        let mut instructions = vec![];
+        let mut init_colors = vec![];
         for x in 0..self.width {
             let mut line_length = 0;
             let mut line_color = if let Some(color) = self.get_color(x, 0) {
                 let (best_match, diff) = self.get_best_preset(color);
                 if diff > tolerance {
-                    self.select_color_precise(color);
+                    if init_colors.len() != 10 {
+                        self.selected_color = 20 + init_colors.len() as i32;
+                        instructions.push(PaintInstruction::Select(self.selected_color));
+                        init_colors.push(color);
+                    } else {
+                        instructions.push(PaintInstruction::SelectPrecise(color));
+                        self.selected_color = 29;
+                    }
+                    self.custom_colors.push(color);
+                    if self.custom_colors.len() == 11 {
+                        self.custom_colors.remove(0);
+                    }
                     self.selected_color
                 } else {
-                    if best_match != WHITE {
-                        self.select_color(best_match);
+                    if best_match != WHITE && self.selected_color != best_match {
+                        instructions.push(PaintInstruction::Select(best_match));
+                        self.selected_color = best_match;
                     }
                     best_match
                 }
@@ -97,9 +116,20 @@ impl Artist {
                     let (best_match, diff) = self.get_best_preset(color);
                     if diff > tolerance {
                         if line_color != WHITE {
-                            self.draw_line(x, y - line_length, x, y - 1);
+                            instructions.push(PaintInstruction::Line(x, y - line_length, x, y - 1));
                         }
-                        self.select_color_precise(color);
+                        if init_colors.len() != 10 {
+                            self.selected_color = 20 + init_colors.len() as i32;
+                            instructions.push(PaintInstruction::Select(self.selected_color));
+                            init_colors.push(color);
+                        } else {
+                            instructions.push(PaintInstruction::SelectPrecise(color));
+                            self.selected_color = 29;
+                        }
+                        self.custom_colors.push(color);
+                        if self.custom_colors.len() == 11 {
+                            self.custom_colors.remove(0);
+                        }
                         line_length = 1;
                         line_color = self.selected_color;
                     } else {
@@ -107,17 +137,18 @@ impl Artist {
                             line_length += 1;
                         } else {
                             if line_color != WHITE {
-                                self.draw_line(x, y - line_length, x, y - 1);
+                                instructions.push(PaintInstruction::Line(x, y - line_length, x, y - 1));
                             }
                             line_length = 1;
                             line_color = best_match;
-                            if line_color != WHITE {
-                                self.select_color(best_match);
+                            if line_color != WHITE && self.selected_color != best_match {
+                                instructions.push(PaintInstruction::Select(best_match));
+                                self.selected_color = best_match;
                             }
                         }
                     }
                 } else if line_color != WHITE {
-                    self.draw_line(x, y - line_length, x, y - 1);
+                    instructions.push(PaintInstruction::Line(x, y - line_length, x, y - 1));
                     line_length = 1;
                     line_color = WHITE;
                 } else {
@@ -125,9 +156,34 @@ impl Artist {
                 }
             }
             if line_color != WHITE {
-                self.draw_line(x, self.height - line_length, x, self.height - 1);
+                instructions.push(PaintInstruction::Line(x, self.height - line_length, x, self.height - 1));
             }
         }
+        (instructions, init_colors)
+    }
+
+    fn paint_from_preprocess(&mut self, instructions: Vec<PaintInstruction>, init_colors: Vec<Rgb<u8>>) {
+        if init_colors.len() != 0 {
+            for color in &init_colors {
+                self.create_color(*color);
+            }
+            for i in 0..10 - init_colors.len() {
+                self.create_color(self.colors[i]);
+            }
+            self.click(self.left, self.top);
+        }
+        for instruction in instructions {
+            match instruction {
+                PaintInstruction::Line(start_x, start_y, end_x, end_y) => self.draw_line(start_x, start_y, end_x, end_y),
+                PaintInstruction::Select(index) => self.select_color(index),
+                PaintInstruction::SelectPrecise(color) => self.select_color_precise(color),
+            }
+        }
+    }
+
+    fn paint(&mut self, tolerance: f32) {
+        let (instructions, init_colors) = self.paint_preprocess(tolerance);
+        self.paint_from_preprocess(instructions, init_colors);
     }
 
     fn click(&mut self, x: i32, y: i32) {
@@ -192,30 +248,18 @@ impl Artist {
     }
 
     fn select_color(&mut self, color_index: i32) {
-        if self.selected_color != color_index {
-            let column = color_index % 10;
-            let row = (color_index - column) / 10;
-            let x = column * COLOR_SPACING + self.black_x;
-            let y = row * COLOR_SPACING + self.black_y;
-            self.click(x, y);
-            self.selected_color = color_index;
-            self.canvas_selected = false;
-        }
+        let column = color_index % 10;
+        let row = (color_index - column) / 10;
+        let x = column * COLOR_SPACING + self.black_x;
+        let y = row * COLOR_SPACING + self.black_y;
+        self.click(x, y);
+        self.selected_color = color_index;
+        self.canvas_selected = false;
     }
 
     fn select_color_precise(&mut self, color: Rgb<u8>) {
-        if self.custom_colors.len() != 10 {
-            self.create_color_init();
-        }
         self.create_color(color);
     }
-
-    fn create_color_init(&mut self) {
-        for i in 0..9 {
-            self.create_color(self.colors[i]);
-        }
-    }
-
 
     fn create_color(&mut self, color: Rgb<u8>) {
         alt_sequence(&[Key::E, Key::C], &mut self.enigo);
@@ -228,11 +272,6 @@ impl Artist {
             self.enigo.key_click(Key::Tab);
         }
         self.enigo.key_click(Key::Return);
-        self.custom_colors.push(color);
-        if self.custom_colors.len() == 11 {
-            self.custom_colors.remove(0);
-        }
-        self.selected_color = 29;
         self.canvas_selected = false;
         sleep(MEDIUM_SLEEP_TIME);
     }
