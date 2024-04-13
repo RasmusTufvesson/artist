@@ -1,5 +1,5 @@
 # Artist
-This is a program that takes control of your mouse and keyboard to paint an image in microsoft paint. It uses the enigo crate for mouse and keyboard control and the image crate for reading from the image. The program also uses the crates device_query and xcap to capture keyboard events and take screenshots respectively. If you want to share the painting the program will also save a screenshot to `out.png`.
+This is a program that takes control of your mouse and keyboard to paint an image in microsoft paint. It uses the enigo crate for mouse and keyboard control and the image crate for reading from the image. The program also uses the crates device_query and xcap to capture keyboard events and take screenshots respectively. If you want to share the painting the program will also save a screenshot to `out.png`. If you provide the program with a gif file it will paint all of the individual frames and then combine them into a gif called `out.gif`.
 
 ## How to use
 You are supposed to call this program from the command line and provide it with a path to an image, you can optionally provide a tolerance value (the higher the worse the quality, defaults to 5.0). I would not recommend setting this to a lower value than 5 as then the program takes way too long. A call could look like this:

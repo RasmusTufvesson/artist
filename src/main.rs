@@ -1,7 +1,7 @@
-use std::{collections::HashMap, env::args, thread::sleep, time::Duration};
+use std::{collections::HashMap, env::args, fs::File, io::BufReader, thread::sleep, time::Duration};
 use device_query::{DeviceQuery, DeviceState, Keycode};
 use enigo::{Key, KeyboardControllable, MouseButton, MouseControllable};
-use image::{imageops::{resize, crop_imm}, DynamicImage, GenericImageView, Pixel, Rgb, Rgba};
+use image::{codecs::gif::{GifDecoder, GifEncoder}, imageops::{crop_imm, resize}, AnimationDecoder, Delay, Frame, ImageBuffer, Pixel, Rgb, Rgba};
 use xcap::Monitor;
 
 const SMALL_SLEEP_TIME: Duration = Duration::from_millis(5);
@@ -14,21 +14,57 @@ const BACKGROUND: i32 = -1;
 fn main() {
     let args: Vec<String> = args().collect();
     let image_path = args.get(1).expect("Specify image path");
-    let img = image::open(image_path).expect("Could not open image");
-    let colors = [*Rgb::from_slice(&[0,0,0]), *Rgb::from_slice(&[127,127,127]), *Rgb::from_slice(&[136,0,21]),
-                                  *Rgb::from_slice(&[237,28,36]), *Rgb::from_slice(&[255,127,39]), *Rgb::from_slice(&[255,242,0]),
-                                  *Rgb::from_slice(&[34,177,76]), *Rgb::from_slice(&[0,162,232]), *Rgb::from_slice(&[63,72,204]),
-                                  *Rgb::from_slice(&[163,73,164]), *Rgb::from_slice(&[255,255,255]), *Rgb::from_slice(&[195,195,195]),
-                                  *Rgb::from_slice(&[185,122,87]), *Rgb::from_slice(&[255,174,201]), *Rgb::from_slice(&[255,201,14]),
-                                  *Rgb::from_slice(&[239,228,176]), *Rgb::from_slice(&[181,230,29]), *Rgb::from_slice(&[153,217,234]),
-                                  *Rgb::from_slice(&[112,146,190]), *Rgb::from_slice(&[200,191,231])];
-    let mut artist = Artist::new(img, colors);
     let tolerance =  match args.get(2) {
         None => 5.,
         Some(val) => val.parse().expect("Could not parse tolerance"),
     };
-    artist.paint(tolerance);
-    artist.screenshot("out.png");
+    if image_path.ends_with(".gif") {
+        let file_in = BufReader::new(File::open(image_path).unwrap());
+        let decoder = GifDecoder::new(file_in).unwrap();
+        let frames = decoder.into_frames().collect_frames().expect("Error decoding gif");
+        let mut artist = GifArtist::new(frames, tolerance);
+        let new_frames = artist.paint();
+        let file_out = File::create("out.gif").unwrap();
+        let mut encoder = GifEncoder::new(file_out);
+        encoder.set_repeat(image::codecs::gif::Repeat::Infinite).unwrap();
+        encoder.encode_frames(new_frames.into_iter()).unwrap();
+    } else {
+        let img = image::open(image_path).expect("Could not open image");
+        let mut artist = Artist::new(img.into());
+        artist.paint(tolerance);
+        artist.screenshot().save("out.png").unwrap();
+    }
+}
+
+struct GifArtist {
+    artist: Artist,
+    gif: Vec<Frame>,
+    tolerance: f32,
+}
+
+impl GifArtist {
+    fn new(gif: Vec<Frame>, tolerance: f32) -> Self {
+        let artist = Artist::new(gif[0].buffer().clone());
+        Self { artist, gif, tolerance }
+    }
+
+    fn paint(&mut self) -> Vec<Frame> {
+        let mut new_frames = vec![];
+        let frame = &self.gif[0];
+        new_frames.push(self.paint_frame(frame.left(), frame.top(), frame.delay()));
+        for frame_index in 1..self.gif.len() {
+            let frame = &self.gif[frame_index];
+            self.artist.new_image(frame.buffer().clone());
+            new_frames.push(self.paint_frame(frame.left(), frame.top(), frame.delay()));
+        }
+        new_frames
+    }
+
+    fn paint_frame(&mut self, left: u32, top: u32, delay: Delay) -> Frame {
+        self.artist.paint(self.tolerance);
+        let img = self.artist.screenshot();
+        Frame::from_parts(img, left, top, delay)
+    }
 }
 
 enum PaintInstruction {
@@ -41,7 +77,7 @@ enum PaintInstruction {
 
 struct Artist {
     enigo: enigo::Enigo,
-    img: DynamicImage,
+    img: ImageBuffer<Rgba<u8>, Vec<u8>>,
     left: i32,
     top: i32,
     black_x: i32,
@@ -55,8 +91,15 @@ struct Artist {
 }
 
 impl Artist {
-    fn new(img: DynamicImage, colors: [Rgb<u8>; 20]) -> Self {
-        let mut enigo = enigo::Enigo::new();
+    fn new(img: ImageBuffer<Rgba<u8>, Vec<u8>>) -> Self {
+        let colors = [*Rgb::from_slice(&[0,0,0]), *Rgb::from_slice(&[127,127,127]), *Rgb::from_slice(&[136,0,21]),
+                                     *Rgb::from_slice(&[237,28,36]), *Rgb::from_slice(&[255,127,39]), *Rgb::from_slice(&[255,242,0]),
+                                     *Rgb::from_slice(&[34,177,76]), *Rgb::from_slice(&[0,162,232]), *Rgb::from_slice(&[63,72,204]),
+                                     *Rgb::from_slice(&[163,73,164]), *Rgb::from_slice(&[255,255,255]), *Rgb::from_slice(&[195,195,195]),
+                                     *Rgb::from_slice(&[185,122,87]), *Rgb::from_slice(&[255,174,201]), *Rgb::from_slice(&[255,201,14]),
+                                     *Rgb::from_slice(&[239,228,176]), *Rgb::from_slice(&[181,230,29]), *Rgb::from_slice(&[153,217,234]),
+                                     *Rgb::from_slice(&[112,146,190]), *Rgb::from_slice(&[200,191,231])];
+        let enigo = enigo::Enigo::new();
         let state = device_query::DeviceState::new();
         wait_for_keyup(Keycode::LControl, &state);
         let (mut left, mut top) = enigo.mouse_location();
@@ -64,8 +107,6 @@ impl Artist {
         let (mut right, mut bottom) = enigo.mouse_location();
         wait_for_keyup(Keycode::LControl, &state);
         let (black_x, black_y) = enigo.mouse_location();
-        shortcut(&[Key::Control, Key::A], &mut enigo);
-        enigo.key_click(Key::Delete);
         if right < left {
             (right, left) = (left, right);
         }
@@ -77,15 +118,20 @@ impl Artist {
         let horizontal_dots = (painting_width as f32 / DOT_WIDTH_FLOAT).ceil() as i32;
         let vertical_dots = (painting_height as f32 / DOT_WIDTH_FLOAT).ceil() as i32;
         let img = resize(&img, horizontal_dots as u32, vertical_dots as u32, image::imageops::FilterType::Gaussian);
-        Self { enigo, img: img.into(), left, top, black_x, black_y, width: horizontal_dots, height: vertical_dots, colors, selected_color: 0, canvas_selected: false, custom_colors: vec![] }
+        Self { enigo, img: img, left, top, black_x, black_y, width: horizontal_dots, height: vertical_dots, colors, selected_color: 0, canvas_selected: false, custom_colors: vec![] }
+    }
+
+    fn new_image(&mut self, img: ImageBuffer<Rgba<u8>, Vec<u8>>) {
+        let img = resize(&img, self.width as u32, self.height as u32, image::imageops::FilterType::Gaussian);
+        self.img = img;
     }
 
     fn paint_preprocess(&mut self, tolerance: f32) -> (Vec<PaintInstruction>, Vec<Rgb<u8>>, Rgb<u8>) {
         let mut instructions = vec![];
         let mut init_colors = vec![];
         let mut total_colors: HashMap<Rgb<u8>, i32> = HashMap::new();
-        for (_, _, color) in self.img.pixels() {
-            let blended = blend_with_white(color);
+        for color in self.img.pixels() {
+            let blended = blend_with_white(*color);
             let mut best_match = None;
             let mut best_match_value = f32::INFINITY;
             for (color, _) in total_colors.iter() {
@@ -197,18 +243,22 @@ impl Artist {
     }
 
     fn paint_from_preprocess(&mut self, instructions: Vec<PaintInstruction>, init_colors: Vec<Rgb<u8>>, background: Rgb<u8>) {
+        self.click(self.left, self.top);
+        shortcut(&[Key::Control, Key::A], &mut self.enigo);
+        self.enigo.key_click(Key::Delete);
         self.select_square();
         self.set_max_brush_size();
         self.select_color_precise(background, false);
         self.select_color_precise(background, true);
         self.draw_square(0, 0, self.width - 1, self.height - 1);
-        for color in &init_colors {
-            self.create_color(*color);
+        if init_colors.len() != 0 {
+            for color in &init_colors {
+                self.create_color(*color);
+            }
+            for i in 0..10 - init_colors.len() {
+                self.create_color(self.colors[i]);
+            }
         }
-        for i in 0..10 - init_colors.len() {
-            self.create_color(self.colors[i]);
-        }
-        self.click(self.left, self.top);
         for instruction in instructions {
             match instruction {
                 PaintInstruction::Line(start_x, start_y, end_x, end_y) => self.draw_line(start_x, start_y, end_x, end_y),
@@ -225,11 +275,10 @@ impl Artist {
         self.paint_from_preprocess(instructions, init_colors, background);
     }
 
-    fn screenshot(&self, path: &str) {
+    fn screenshot(&self) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
         let monitor = Monitor::from_point(self.left, self.top).unwrap();
         let img = monitor.capture_image().unwrap();
-        let cropped = crop_imm(&img, self.left as u32, self.top as u32, (self.width * DOT_WIDTH) as u32, (self.height * DOT_WIDTH) as u32).to_image();
-        cropped.save(path).unwrap();
+        crop_imm(&img, self.left as u32, self.top as u32, (self.width * DOT_WIDTH) as u32, (self.height * DOT_WIDTH) as u32).to_image()
     }
 
     fn click(&mut self, x: i32, y: i32) {
@@ -265,16 +314,12 @@ impl Artist {
     fn draw_square(&mut self, start_x: i32, start_y: i32, end_x: i32, end_y: i32) {
         let (start_x, start_y) = (start_x * DOT_WIDTH + self.left + 2, start_y * DOT_WIDTH + self.top + 2);
         let (end_x, end_y) = (end_x * DOT_WIDTH + self.left, end_y * DOT_WIDTH + self.top);
-        if !self.canvas_selected {
-            self.click(start_x, start_y);
-            self.canvas_selected = true;
-        }
         self.drag(start_x, start_y, end_x, end_y);
         self.click(start_x, start_y - 20);
     }
 
     fn get_color(&self, x: i32, y: i32) -> Option<Rgb<u8>> {
-        let color: Rgba<u8> = self.img.get_pixel(x as u32, y as u32);
+        let color: Rgba<u8> = *self.img.get_pixel(x as u32, y as u32);
         if color.0[3] == 0 {
             None
         } else if color.0[3] != 255 {
@@ -346,6 +391,7 @@ impl Artist {
 
     fn set_max_brush_size(&mut self) {
         alt_sequence(&[Key::S, Key::Z], &mut self.enigo);
+        sleep(MEDIUM_SLEEP_TIME);
         self.enigo.key_click(Key::UpArrow);
         self.enigo.key_click(Key::Return);
     }
@@ -368,10 +414,12 @@ impl Artist {
             self.enigo.key_click(Key::LeftArrow);
         }
         self.enigo.key_click(Key::Return);
+        sleep(MEDIUM_SLEEP_TIME);
         for _ in 0..2 {
             self.enigo.key_click(Key::Tab);
         }
         self.enigo.key_click(Key::Return);
+        sleep(MEDIUM_SLEEP_TIME);
         self.enigo.key_click(Key::DownArrow);
         self.enigo.key_click(Key::Return);
         self.click(self.left, self.top);
