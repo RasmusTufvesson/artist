@@ -1,8 +1,8 @@
 use std::{env::args, thread::sleep, time::Duration};
+use device_query::{DeviceQuery, DeviceState, Keycode};
 use enigo::{Key, KeyboardControllable, MouseButton, MouseControllable};
 use image::{imageops::resize, DynamicImage, GenericImageView, Pixel, Rgb, Rgba};
 
-const LONG_SLEEP_TIME: Duration = Duration::from_secs(3);
 const SMALL_SLEEP_TIME: Duration = Duration::from_millis(5);
 const MEDIUM_SLEEP_TIME: Duration = Duration::from_millis(20);
 const DOT_WIDTH_FLOAT: f32 = 5.;
@@ -47,24 +47,17 @@ struct Artist {
 impl Artist {
     fn new(img: DynamicImage, colors: [Rgb<u8>; 20]) -> Self {
         let mut enigo = enigo::Enigo::new();
-        sleep(LONG_SLEEP_TIME);
+        let state = device_query::DeviceState::new();
+        wait_for_keyup(Keycode::LControl, &state);
         let (mut left, mut top) = enigo.mouse_location();
-        enigo.mouse_click(MouseButton::Left);
-        sleep(LONG_SLEEP_TIME);
+        wait_for_keyup(Keycode::LControl, &state);
         let (mut right, mut bottom) = enigo.mouse_location();
-        enigo.mouse_click(MouseButton::Left);
-        sleep(LONG_SLEEP_TIME);
+        wait_for_keyup(Keycode::LControl, &state);
         let (black_x, black_y) = enigo.mouse_location();
-        enigo.key_down(Key::Control);
-        enigo.key_down(Key::A);
-        enigo.key_up(Key::Control);
-        enigo.key_up(Key::A);
+        shortcut(&[Key::Control, Key::A], &mut enigo);
         enigo.key_click(Key::Delete);
-        enigo.key_click(Key::Alt);
-        enigo.key_click(Key::B);
-        enigo.key_click(Key::Alt);
-        enigo.key_click(Key::S);
-        enigo.key_click(Key::Z);
+        alt_sequence(&[Key::B], &mut enigo);
+        alt_sequence(&[Key::S, Key::Z], &mut enigo);
         enigo.key_click(Key::UpArrow);
         enigo.key_click(Key::Return);
         if right < left {
@@ -225,16 +218,11 @@ impl Artist {
 
 
     fn create_color(&mut self, color: Rgb<u8>) {
-        self.enigo.key_click(Key::Alt);
-        self.enigo.key_click(Key::E);
-        self.enigo.key_click(Key::C);
+        alt_sequence(&[Key::E, Key::C], &mut self.enigo);
         for _ in 0..4 {
             self.enigo.key_click(Key::Tab);
         }
-        self.enigo.key_down(Key::Control);
-        self.enigo.key_down(Key::A);
-        self.enigo.key_up(Key::Control);
-        self.enigo.key_up(Key::A);
+        shortcut(&[Key::Control, Key::A], &mut self.enigo);
         self.enigo.key_sequence(&format!("#{:02X?}{:02X?}{:02X?}", color.0[0], color.0[1], color.0[2]));
         for _ in 0..8 {
             self.enigo.key_click(Key::Tab);
@@ -261,4 +249,31 @@ fn blend_with_white(color: Rgba<u8>) -> Rgb<u8> {
         (color.0[1] as f32 * alpha_ratio + 255. - 255. * alpha_ratio).floor() as u8,
         (color.0[2] as f32 * alpha_ratio + 255. - 255. * alpha_ratio).floor() as u8,
     ])
+}
+
+fn shortcut(keys: &[Key], enigo: &mut enigo::Enigo) {
+    for key in keys {
+        enigo.key_down(*key);
+    }
+    for key in keys {
+        enigo.key_up(*key);
+    }
+}
+
+fn alt_sequence(keys: &[Key], enigo: &mut enigo::Enigo) {
+    enigo.key_click(Key::Alt);
+    for key in keys {
+        enigo.key_click(*key);
+    }
+}
+
+fn wait_for_keyup(key: Keycode, state: &DeviceState) {
+    let mut pressed = false;
+    loop {
+        if state.get_keys().iter().any(|x| x == &key) {
+            pressed = true;
+        } else if pressed == true {
+            return;
+        }
+    }
 }
