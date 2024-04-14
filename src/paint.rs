@@ -157,7 +157,7 @@ impl Artist {
                     draw_batches[best_match].push((*x as i32, *y as i32));
                 }
             }
-            while pixels.len() != 0 && custom_draw_batches.len() < self.color_limit - 1 {
+            while pixels.len() != 0 && custom_draw_batches.len() < self.color_limit {
                 let mut total_colors: HashMap<Rgb<u8>, i32> = HashMap::new();
                 for (_, _, color) in &pixels {
                     let mut best_match = None;
@@ -186,20 +186,34 @@ impl Artist {
                     }
                 }
             }
-            if custom_draw_batches.len() == self.color_limit - 1 && pixels.len() != 0 {
-                let mut average_r = 0.;
-                let mut average_g = 0.;
-                let mut average_b = 0.;
-                for (_, _, color) in &pixels {
-                    average_r += color.0[0] as f32;
-                    average_g += color.0[1] as f32;
-                    average_b += color.0[2] as f32;
+            if pixels.len() != 0 {
+                for (x, y, color) in pixels {
+                    let mut best_match = 0;
+                    let mut best_match_value = f32::INFINITY;
+                    for (i, _) in draw_batches.iter().enumerate() {
+                        let diff = color_difference(color, self.colors[i]);
+                        if diff < best_match_value {
+                            best_match = i;
+                            best_match_value = diff;
+                        }
+                    }
+                    for (i, (color_2, _)) in custom_draw_batches.iter().enumerate() {
+                        let diff = color_difference(color, *color_2);
+                        if diff < best_match_value {
+                            best_match = i + 20;
+                            best_match_value = diff;
+                        }
+                    }
+                    let diff = color_difference(color, background);
+                    if diff < best_match_value {
+                        continue;
+                    }
+                    if best_match < 20 {
+                        draw_batches[best_match].push((x as i32, y as i32));
+                    } else {
+                        custom_draw_batches[best_match].1.push((x as i32, y as i32));
+                    }
                 }
-                let len = pixels.len() as f32;
-                average_r /= len;
-                average_g /= len;
-                average_b /= len;
-                custom_draw_batches.push((*Rgb::from_slice(&[average_r as u8, average_g as u8, average_b as u8]), pixels.iter().rev().map(|(x, y, _)| (*x as i32, *y as i32)).collect()));
             }
         }
         let mut final_instructions = vec![
