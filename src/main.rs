@@ -438,14 +438,14 @@ impl Artist {
         for _ in 0..22 {
             self.enigo.key_click(Key::Tab);
         }
-        for _ in 0..22 {
-            self.enigo.key_click(Key::RightArrow);
+        for _ in 0..7 {
+            self.enigo.key_click(Key::LeftArrow);
         }
         for _ in 0..2 {
             self.enigo.key_click(Key::UpArrow);
         }
         for _ in 0..3 {
-            self.enigo.key_click(Key::LeftArrow);
+            self.enigo.key_click(Key::RightArrow);
         }
         self.enigo.key_click(Key::Return);
         sleep(MEDIUM_SLEEP_TIME);
