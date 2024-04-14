@@ -343,7 +343,7 @@ impl Artist {
         sleep(LONG_SLEEP_TIME);
         let monitor = Monitor::from_point(self.left, self.top).unwrap();
         let img = monitor.capture_image().unwrap();
-        crop_imm(&img, self.left as u32, self.top as u32, (self.width * DOT_WIDTH - 1) as u32, (self.height * DOT_WIDTH - 1) as u32).to_image()
+        crop_imm(&img, self.left as u32, self.top as u32, (self.width * DOT_WIDTH - 1) as u32, (self.height * DOT_WIDTH - 2) as u32).to_image()
     }
 
     fn click(&mut self, x: i32, y: i32) {
