@@ -42,7 +42,7 @@ impl GifArtist {
 }
 
 enum PaintInstruction {
-    Line(i32, i32, i32, i32),
+    Line(Vec<(i32, i32)>),
     Color(i32),
     ColorPrecise(Rgb<u8>),
     SetMaxSize,
@@ -209,20 +209,46 @@ impl Artist {
         for (i, batch) in draw_batches.iter().enumerate() {
             if batch.len() != 0 {
                 final_instructions.push(PaintInstruction::Color(i as i32));
-                let mut line_length = 0;
                 let mut iter = batch.iter();
-                let (mut line_x, mut line_y) = iter.next().unwrap();
+                let (mut last_x, mut last_y) = iter.next().unwrap();
+                let mut line_positions = vec![(last_x, last_y)];
+                let mut is_horizontal = true;
                 for (x, y) in iter {
-                    if *y == line_y && *x == line_x - 1 {
-                        line_length += 1;
+                    if *y == last_y {
+                        if *x == last_x - 1 {
+                            if !is_horizontal {
+                                is_horizontal = true;
+                                line_positions.push((last_x, last_y));
+                            }
+                        } else {
+                            line_positions.push((last_x, last_y));
+                            final_instructions.push(PaintInstruction::Line(line_positions));
+                            line_positions = vec![(*x, *y)];
+                            is_horizontal = true;
+                        }
+                    } else if *y == last_y - 1 {
+                        if *x == last_x {
+                            if is_horizontal {
+                                is_horizontal = false;
+                                line_positions.push((last_x, last_y));
+                            }
+                        } else {
+                            line_positions.push((last_x, last_y));
+                            final_instructions.push(PaintInstruction::Line(line_positions));
+                            line_positions = vec![(*x, *y)];
+                            is_horizontal = true;
+                        }
                     } else {
-                        final_instructions.push(PaintInstruction::Line(line_x + line_length, line_y, line_x, line_y));
-                        line_length = 0;
+                        line_positions.push((last_x, last_y));
+                        final_instructions.push(PaintInstruction::Line(line_positions));
+                        line_positions = vec![(*x, *y)];
+                        is_horizontal = true;
                     }
-                    line_x = *x;
-                    line_y = *y;
+                    last_x = *x;
+                    last_y = *y;
                 }
-                final_instructions.push(PaintInstruction::Line(line_x + line_length, line_y, line_x, line_y));
+                line_positions.push((last_x, last_y));
+                final_instructions.push(PaintInstruction::Line(line_positions));
             }
         }
         for (color, batch) in custom_draw_batches {
@@ -234,20 +260,46 @@ impl Artist {
                 } else {
                     final_instructions.push(PaintInstruction::ColorPrecise(color));
                 }
-                let mut line_length = 0;
                 let mut iter = batch.iter();
-                let (mut line_x, mut line_y) = iter.next().unwrap();
+                let (mut last_x, mut last_y) = iter.next().unwrap();
+                let mut line_positions = vec![(last_x, last_y)];
+                let mut is_horizontal = true;
                 for (x, y) in iter {
-                    if *y == line_y && *x == line_x - 1 {
-                        line_length += 1;
+                    if *y == last_y {
+                        if *x == last_x - 1 {
+                            if !is_horizontal {
+                                is_horizontal = true;
+                                line_positions.push((last_x, last_y));
+                            }
+                        } else {
+                            line_positions.push((last_x, last_y));
+                            final_instructions.push(PaintInstruction::Line(line_positions));
+                            line_positions = vec![(*x, *y)];
+                            is_horizontal = true;
+                        }
+                    } else if *y == last_y - 1 {
+                        if *x == last_x {
+                            if is_horizontal {
+                                is_horizontal = false;
+                                line_positions.push((last_x, last_y));
+                            }
+                        } else {
+                            line_positions.push((last_x, last_y));
+                            final_instructions.push(PaintInstruction::Line(line_positions));
+                            line_positions = vec![(*x, *y)];
+                            is_horizontal = true;
+                        }
                     } else {
-                        final_instructions.push(PaintInstruction::Line(line_x + line_length, line_y, line_x, line_y));
-                        line_length = 0;
+                        line_positions.push((last_x, last_y));
+                        final_instructions.push(PaintInstruction::Line(line_positions));
+                        line_positions = vec![(*x, *y)];
+                        is_horizontal = true;
                     }
-                    line_x = *x;
-                    line_y = *y;
+                    last_x = *x;
+                    last_y = *y;
                 }
-                final_instructions.push(PaintInstruction::Line(line_x + line_length, line_y, line_x, line_y));
+                line_positions.push((last_x, last_y));
+                final_instructions.push(PaintInstruction::Line(line_positions));
             }
         }
         final_instructions.append(&mut instructions);
@@ -273,7 +325,7 @@ impl Artist {
         }
         for instruction in instructions {
             match instruction {
-                PaintInstruction::Line(start_x, start_y, end_x, end_y) => self.draw_line(start_x, start_y, end_x, end_y),
+                PaintInstruction::Line(positions) => self.draw_line(positions),
                 PaintInstruction::Color(index) => self.select_color(index),
                 PaintInstruction::ColorPrecise(color) => self.select_color_precise(color, false),
                 PaintInstruction::SelectBrush => self.select_brush(),
@@ -314,14 +366,26 @@ impl Artist {
         }
     }
 
-    fn draw_line(&mut self, start_x: i32, start_y: i32, end_x: i32, end_y: i32) {
-        let (start_x, start_y) = (start_x * DOT_WIDTH, start_y * DOT_WIDTH);
-        let (end_x, end_y) = (end_x * DOT_WIDTH, end_y * DOT_WIDTH);
+    fn drag_complex(&mut self, positions: Vec<(i32, i32)>) {
+        self.enigo.mouse_move_to(positions[0].0, positions[0].1);
+        self.enigo.mouse_down(MouseButton::Left);
+        for i in 1..positions.len() {
+            self.enigo.mouse_move_to(positions[i].0, positions[i].1);
+        }
+        self.enigo.mouse_up(MouseButton::Left);
+        sleep(SMALL_SLEEP_TIME);
+        if self.enigo.mouse_location() != (positions[positions.len()-1].0, positions[positions.len()-1].1) {
+            panic!("Movement detected after dragging");
+        }
+    }
+
+    fn draw_line(&mut self, positions: Vec<(i32, i32)>) {
+        let positions: Vec<(i32, i32)> = positions.iter().map(|(x, y)| (*x * DOT_WIDTH + self.left, *y * DOT_WIDTH + self.top)).collect();
         if !self.canvas_selected {
-            self.click(self.left + start_x, self.top + start_y);
+            self.click(positions[0].0, positions[0].1);
             self.canvas_selected = true;
         }
-        self.drag(self.left + start_x, self.top + start_y, self.left + end_x, self.top + end_y);
+        self.drag_complex(positions);
     }
 
     fn draw_square(&mut self, start_x: i32, start_y: i32, end_x: i32, end_y: i32) {
