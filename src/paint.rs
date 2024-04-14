@@ -371,12 +371,12 @@ impl Artist {
         self.enigo.mouse_down(MouseButton::Left);
         for i in 1..positions.len() {
             self.enigo.mouse_move_to(positions[i].0, positions[i].1);
+            sleep(SMALL_SLEEP_TIME);
+            if self.enigo.mouse_location() != (positions[i].0, positions[i].1) {
+                panic!("Movement detected while dragging");
+            }
         }
         self.enigo.mouse_up(MouseButton::Left);
-        sleep(SMALL_SLEEP_TIME);
-        if self.enigo.mouse_location() != (positions[positions.len()-1].0, positions[positions.len()-1].1) {
-            panic!("Movement detected after dragging");
-        }
     }
 
     fn draw_line(&mut self, positions: Vec<(i32, i32)>) {
