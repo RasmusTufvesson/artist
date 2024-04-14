@@ -49,6 +49,14 @@ enum PaintInstruction {
     SelectBrush,
 }
 
+#[derive(PartialEq)]
+enum Direction {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
 pub struct Artist {
     enigo: enigo::Enigo,
     img: DynamicImage,
@@ -220,104 +228,111 @@ impl Artist {
             PaintInstruction::SelectBrush,
             PaintInstruction::SetMaxSize,
         ];
-        for (i, batch) in draw_batches.iter().enumerate() {
+        for (i, batch) in draw_batches.iter_mut().enumerate() {
             if batch.len() != 0 {
                 final_instructions.push(PaintInstruction::Color(i as i32));
-                let mut iter = batch.iter();
-                let (mut last_x, mut last_y) = iter.next().unwrap();
-                let mut line_positions = vec![(last_x, last_y)];
-                let mut is_horizontal = true;
-                for (x, y) in iter {
-                    if *y == last_y {
-                        if *x == last_x - 1 {
-                            if !is_horizontal {
-                                is_horizontal = true;
-                                line_positions.push((last_x, last_y));
-                            }
-                        } else {
-                            line_positions.push((last_x, last_y));
-                            final_instructions.push(PaintInstruction::Line(line_positions));
-                            line_positions = vec![(*x, *y)];
-                            is_horizontal = true;
-                        }
-                    } else if *y == last_y - 1 {
-                        if *x == last_x {
-                            if is_horizontal {
-                                is_horizontal = false;
-                                line_positions.push((last_x, last_y));
-                            }
-                        } else {
-                            line_positions.push((last_x, last_y));
-                            final_instructions.push(PaintInstruction::Line(line_positions));
-                            line_positions = vec![(*x, *y)];
-                            is_horizontal = true;
-                        }
-                    } else {
-                        line_positions.push((last_x, last_y));
-                        final_instructions.push(PaintInstruction::Line(line_positions));
-                        line_positions = vec![(*x, *y)];
-                        is_horizontal = true;
-                    }
-                    last_x = *x;
-                    last_y = *y;
-                }
-                line_positions.push((last_x, last_y));
-                final_instructions.push(PaintInstruction::Line(line_positions));
+                let mut lines = self.lines_from_points(batch);
+                final_instructions.append(&mut lines);
             }
         }
-        for (color, batch) in custom_draw_batches {
+        for (color, batch) in &mut custom_draw_batches {
             if batch.len() != 0 {
                 if init_colors.len() != 10 {
                     let color_index = 20 + init_colors.len() as i32;
                     final_instructions.push(PaintInstruction::Color(color_index));
-                    init_colors.push(color);
+                    init_colors.push(*color);
                 } else {
-                    final_instructions.push(PaintInstruction::ColorPrecise(color));
+                    final_instructions.push(PaintInstruction::ColorPrecise(*color));
                 }
-                let mut iter = batch.iter();
-                let (mut last_x, mut last_y) = iter.next().unwrap();
-                let mut line_positions = vec![(last_x, last_y)];
-                let mut is_horizontal = true;
-                for (x, y) in iter {
-                    if *y == last_y {
-                        if *x == last_x - 1 {
-                            if !is_horizontal {
-                                is_horizontal = true;
-                                line_positions.push((last_x, last_y));
-                            }
-                        } else {
-                            line_positions.push((last_x, last_y));
-                            final_instructions.push(PaintInstruction::Line(line_positions));
-                            line_positions = vec![(*x, *y)];
-                            is_horizontal = true;
-                        }
-                    } else if *y == last_y - 1 {
-                        if *x == last_x {
-                            if is_horizontal {
-                                is_horizontal = false;
-                                line_positions.push((last_x, last_y));
-                            }
-                        } else {
-                            line_positions.push((last_x, last_y));
-                            final_instructions.push(PaintInstruction::Line(line_positions));
-                            line_positions = vec![(*x, *y)];
-                            is_horizontal = true;
-                        }
-                    } else {
-                        line_positions.push((last_x, last_y));
-                        final_instructions.push(PaintInstruction::Line(line_positions));
-                        line_positions = vec![(*x, *y)];
-                        is_horizontal = true;
-                    }
-                    last_x = *x;
-                    last_y = *y;
-                }
-                line_positions.push((last_x, last_y));
-                final_instructions.push(PaintInstruction::Line(line_positions));
+                let mut lines = self.lines_from_points(batch);
+                final_instructions.append(&mut lines);
             }
         }
         final_instructions.append(&mut instructions);
         (final_instructions, init_colors, background)
+    }
+
+    fn lines_from_points(&self, points: &mut Vec<(i32, i32)>) -> Vec<PaintInstruction> {
+        let mut instructions = vec![];
+        while points.len() != 0 {
+            let (mut last_x, mut last_y) = points.remove(0);
+            let mut line = vec![(last_x, last_y)];
+            let mut direction = Direction::Left;
+            let mut can_continue = false;
+            let mut continue_index = 0;
+            for (i, (x, y)) in points.iter().enumerate() {
+                if *x == last_x - 1 && *y == last_y {
+                    continue_index = i;
+                    can_continue = true;
+                    break;
+                }
+                if *x == last_x + 1 && *y == last_y {
+                    direction = Direction::Right;
+                    continue_index = i;
+                    can_continue = true;
+                    break;
+                }
+                if *y == last_y - 1 && *x == last_x {
+                    direction = Direction::Up;
+                    continue_index = i;
+                    can_continue = true;
+                    break;
+                }
+                if *y == last_y + 1 && *x == last_x {
+                    direction = Direction::Down;
+                    continue_index = i;
+                    can_continue = true;
+                    break;
+                }
+            }
+            while can_continue && points.len() != 0 {
+                (last_x, last_y) = points.remove(continue_index);
+                can_continue = false;
+                for (i, (x, y)) in points.iter().enumerate() {
+                    if direction != Direction::Right && *x == last_x - 1 && *y == last_y {
+                        if direction != Direction::Left {
+                            direction = Direction::Left;
+                            line.push((last_x, last_y));
+                        }
+                        continue_index = i;
+                        can_continue = true;
+                        break;
+                    }
+                    if direction != Direction::Left && *x == last_x + 1 && *y == last_y {
+                        if direction != Direction::Right {
+                            direction = Direction::Right;
+                            line.push((last_x, last_y));
+                        }
+                        continue_index = i;
+                        can_continue = true;
+                        break;
+                    }
+                    if direction != Direction::Down && *y == last_y - 1 && *x == last_x {
+                        if direction != Direction::Up {
+                            direction = Direction::Up;
+                            line.push((last_x, last_y));
+                        }
+                        continue_index = i;
+                        can_continue = true;
+                        break;
+                    }
+                    if direction != Direction::Up && *y == last_y + 1 && *x == last_x {
+                        if direction != Direction::Down {
+                            direction = Direction::Down;
+                            line.push((last_x, last_y));
+                        }
+                        continue_index = i;
+                        can_continue = true;
+                        break;
+                    }
+                }
+            }
+            if line[0] != (last_x, last_y) {
+                line.push((last_x, last_y));
+            }
+            instructions.push(PaintInstruction::Line(line));
+        }
+        instructions
     }
 
     fn paint_from_preprocess(&mut self, instructions: Vec<PaintInstruction>, init_colors: Vec<Rgb<u8>>, background: Rgb<u8>) {
@@ -381,16 +396,30 @@ impl Artist {
     }
 
     fn drag_complex(&mut self, positions: Vec<(i32, i32)>) {
-        self.enigo.mouse_move_to(positions[0].0, positions[0].1);
+        let (x, y) = positions[0];
+        self.enigo.mouse_move_to(x, y);
         self.enigo.mouse_down(MouseButton::Left);
-        for i in 1..positions.len() {
-            self.enigo.mouse_move_to(positions[i].0, positions[i].1);
+        sleep(SMALL_SLEEP_TIME);
+        if self.enigo.mouse_location() != (x, y) {
+            panic!("Movement detected while dragging");
+        }
+        for i in 1..positions.len()-1 {
+            let (x, y) = positions[i];
+            self.enigo.mouse_move_to(x, y);
+            self.enigo.mouse_up(MouseButton::Left);
             sleep(SMALL_SLEEP_TIME);
-            if self.enigo.mouse_location() != (positions[i].0, positions[i].1) {
+            if self.enigo.mouse_location() != (x, y) {
                 panic!("Movement detected while dragging");
             }
+            self.enigo.mouse_down(MouseButton::Left);
         }
+        let (x, y) = positions[positions.len()-1];
+        self.enigo.mouse_move_to(x, y);
         self.enigo.mouse_up(MouseButton::Left);
+        sleep(SMALL_SLEEP_TIME);
+        if self.enigo.mouse_location() != (x, y) {
+            panic!("Movement detected after dragging");
+        }
     }
 
     fn draw_line(&mut self, positions: Vec<(i32, i32)>) {
