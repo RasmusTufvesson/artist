@@ -14,14 +14,12 @@ const COLOR_SPACING: i32 = 24;
 pub struct GifArtist {
     artist: Artist,
     gif: Vec<Frame>,
-    tolerance: f32,
-    color_limit: ColorLimit,
 }
 
 impl GifArtist {
-    pub fn new(gif: Vec<Frame>, tolerance: f32, color_limit: ColorLimit) -> Self {
-        let artist = Artist::new(gif[0].buffer().clone().into());
-        Self { artist, gif, tolerance, color_limit }
+    pub fn new(gif: Vec<Frame>, tolerance: f32, color_limit: usize) -> Self {
+        let artist = Artist::new(gif[0].buffer().clone().into(), tolerance, color_limit);
+        Self { artist, gif }
     }
 
     pub fn paint(&mut self) -> Vec<Frame> {
@@ -37,7 +35,7 @@ impl GifArtist {
     }
 
     fn paint_frame(&mut self, left: u32, top: u32, delay: Delay) -> Frame {
-        self.artist.paint(self.tolerance, self.color_limit);
+        self.artist.paint();
         let img = self.artist.screenshot();
         Frame::from_parts(img, left, top, delay)
     }
@@ -51,14 +49,6 @@ enum PaintInstruction {
     SelectBrush,
 }
 
-#[derive(Clone, Copy)]
-pub enum ColorLimit {
-    OnlyPrimary,
-    OnlyFirstCustom,
-    Custom(usize),
-    None,
-}
-
 pub struct Artist {
     enigo: enigo::Enigo,
     img: DynamicImage,
@@ -70,10 +60,12 @@ pub struct Artist {
     height: i32,
     colors: [Rgb<u8>; 20],
     canvas_selected: bool,
+    tolerance: f32,
+    color_limit: usize,
 }
 
 impl Artist {
-    pub fn new(img: ImageBuffer<Rgba<u8>, Vec<u8>>) -> Self {
+    pub fn new(img: ImageBuffer<Rgba<u8>, Vec<u8>>, tolerance: f32, color_limit: usize) -> Self {
         let colors = [*Rgb::from_slice(&[0,0,0]), *Rgb::from_slice(&[127,127,127]), *Rgb::from_slice(&[136,0,21]),
                                      *Rgb::from_slice(&[237,28,36]), *Rgb::from_slice(&[255,127,39]), *Rgb::from_slice(&[255,242,0]),
                                      *Rgb::from_slice(&[34,177,76]), *Rgb::from_slice(&[0,162,232]), *Rgb::from_slice(&[63,72,204]),
@@ -100,7 +92,7 @@ impl Artist {
         let horizontal_dots = (painting_width as f32 / DOT_WIDTH_FLOAT).ceil() as i32;
         let vertical_dots = (painting_height as f32 / DOT_WIDTH_FLOAT).ceil() as i32;
         let img = resize(&img, horizontal_dots as u32, vertical_dots as u32, image::imageops::FilterType::Gaussian);
-        Self { enigo, img: img.into(), left, top, black_x, black_y, width: horizontal_dots, height: vertical_dots, colors, canvas_selected: false }
+        Self { enigo, img: img.into(), left, top, black_x, black_y, width: horizontal_dots, height: vertical_dots, colors, canvas_selected: false, tolerance, color_limit }
     }
 
     fn new_image(&mut self, img: ImageBuffer<Rgba<u8>, Vec<u8>>) {
@@ -108,7 +100,7 @@ impl Artist {
         self.img = img.into();
     }
 
-    fn paint_preprocess(&mut self, tolerance: f32, color_limit: ColorLimit) -> (Vec<PaintInstruction>, Vec<Rgb<u8>>, Rgb<u8>) {
+    fn paint_preprocess(&mut self) -> (Vec<PaintInstruction>, Vec<Rgb<u8>>, Rgb<u8>) {
         let mut instructions = vec![];
         let mut init_colors = vec![];
         let mut total_colors: HashMap<Rgb<u8>, i32> = HashMap::new();
@@ -123,7 +115,7 @@ impl Artist {
                     best_match_value = diff;
                 }
             }
-            if best_match_value > tolerance || best_match == None {
+            if best_match_value > self.tolerance || best_match == None {
                 total_colors.insert(blended, 1);
             } else {
                 *total_colors.get_mut(&best_match.unwrap()).unwrap() += 1;
@@ -134,90 +126,80 @@ impl Artist {
         let mut custom_draw_batches: Vec<(Rgb<u8>, Vec<(i32, i32)>)> = vec![];
         let mut pixels: Vec<(u32, u32, Rgb<u8>)> = self.img.pixels().map(|(x, y, color)| (x, y, blend_with_white(color))).filter(|(_, _, color)| {
             let diff = color_difference(*color, background);
-            diff > tolerance
+            diff > self.tolerance
         }).collect();
-        match color_limit {
-            ColorLimit::OnlyPrimary |
-            ColorLimit::Custom(0) => {
-                for (x, y, color) in pixels.iter().rev() {
-                    let mut best_match = 0;
-                    let mut best_match_value = f32::INFINITY;
-                    for (i, preset) in self.colors.iter().enumerate() {
-                        let diff = color_difference(*color, *preset);
-                        if diff < best_match_value {
-                            best_match = i;
-                            best_match_value = diff;
-                        }
+        if self.color_limit == 0 {
+            for (x, y, color) in pixels.iter().rev() {
+                let mut best_match = 0;
+                let mut best_match_value = f32::INFINITY;
+                for (i, preset) in self.colors.iter().enumerate() {
+                    let diff = color_difference(*color, *preset);
+                    if diff < best_match_value {
+                        best_match = i;
+                        best_match_value = diff;
                     }
+                }
+                draw_batches[best_match].push((*x as i32, *y as i32));
+            }
+        } else  {
+            for (i, (x, y, color)) in pixels.clone().iter().enumerate().rev() {
+                let mut best_match = 0;
+                let mut best_match_value = f32::INFINITY;
+                for (i, preset) in self.colors.iter().enumerate() {
+                    let diff = color_difference(*color, *preset);
+                    if diff < best_match_value {
+                        best_match = i;
+                        best_match_value = diff;
+                    }
+                }
+                if best_match_value <= self.tolerance {
+                    pixels.remove(i);
                     draw_batches[best_match].push((*x as i32, *y as i32));
                 }
             }
-            _ => {
-                let limit = match color_limit {
-                    ColorLimit::None => usize::MAX,
-                    ColorLimit::Custom(val) => val,
-                    ColorLimit::OnlyFirstCustom => 10,
-                    _ => unreachable!(),
-                };
-                for (i, (x, y, color)) in pixels.clone().iter().enumerate().rev() {
-                    let mut best_match = 0;
+            while pixels.len() != 0 && custom_draw_batches.len() < self.color_limit - 1 {
+                let mut total_colors: HashMap<Rgb<u8>, i32> = HashMap::new();
+                for (_, _, color) in &pixels {
+                    let mut best_match = None;
                     let mut best_match_value = f32::INFINITY;
-                    for (i, preset) in self.colors.iter().enumerate() {
-                        let diff = color_difference(*color, *preset);
+                    for (color_2, _) in total_colors.iter() {
+                        let diff = color_difference(*color, *color_2);
                         if diff < best_match_value {
-                            best_match = i;
+                            best_match = Some(color_2.clone());
                             best_match_value = diff;
                         }
                     }
-                    if best_match_value <= tolerance {
+                    if best_match_value > self.tolerance || best_match == None {
+                        total_colors.insert(*color, 1);
+                    } else {
+                        *total_colors.get_mut(&best_match.unwrap()).unwrap() += 1;
+                    }
+                }
+                let most_common = total_colors.iter().max_by_key(|(_, used)| **used).unwrap().0;
+                custom_draw_batches.push((*most_common, vec![]));
+                let index = custom_draw_batches.len() - 1;
+                for (i, (x, y, color)) in pixels.clone().iter().enumerate().rev() {
+                    let diff = color_difference(*color, *most_common);
+                    if diff <= self.tolerance {
                         pixels.remove(i);
-                        draw_batches[best_match].push((*x as i32, *y as i32));
+                        custom_draw_batches[index].1.push((*x as i32, *y as i32));
                     }
                 }
-                while pixels.len() != 0 && custom_draw_batches.len() < limit - 1 {
-                    let mut total_colors: HashMap<Rgb<u8>, i32> = HashMap::new();
-                    for (_, _, color) in &pixels {
-                        let mut best_match = None;
-                        let mut best_match_value = f32::INFINITY;
-                        for (color_2, _) in total_colors.iter() {
-                            let diff = color_difference(*color, *color_2);
-                            if diff < best_match_value {
-                                best_match = Some(color_2.clone());
-                                best_match_value = diff;
-                            }
-                        }
-                        if best_match_value > tolerance || best_match == None {
-                            total_colors.insert(*color, 1);
-                        } else {
-                            *total_colors.get_mut(&best_match.unwrap()).unwrap() += 1;
-                        }
-                    }
-                    let most_common = total_colors.iter().max_by_key(|(_, used)| **used).unwrap().0;
-                    custom_draw_batches.push((*most_common, vec![]));
-                    let index = custom_draw_batches.len() - 1;
-                    for (i, (x, y, color)) in pixels.clone().iter().enumerate().rev() {
-                        let diff = color_difference(*color, *most_common);
-                        if diff <= tolerance {
-                            pixels.remove(i);
-                            custom_draw_batches[index].1.push((*x as i32, *y as i32));
-                        }
-                    }
+            }
+            if custom_draw_batches.len() == self.color_limit - 1 && pixels.len() != 0 {
+                let mut average_r = 0.;
+                let mut average_g = 0.;
+                let mut average_b = 0.;
+                for (_, _, color) in &pixels {
+                    average_r += color.0[0] as f32;
+                    average_g += color.0[1] as f32;
+                    average_b += color.0[2] as f32;
                 }
-                if custom_draw_batches.len() == limit - 1 && pixels.len() != 0 {
-                    let mut average_r = 0.;
-                    let mut average_g = 0.;
-                    let mut average_b = 0.;
-                    for (_, _, color) in &pixels {
-                        average_r += color.0[0] as f32;
-                        average_g += color.0[1] as f32;
-                        average_b += color.0[2] as f32;
-                    }
-                    let len = pixels.len() as f32;
-                    average_r /= len;
-                    average_g /= len;
-                    average_b /= len;
-                    custom_draw_batches.push((*Rgb::from_slice(&[average_r as u8, average_g as u8, average_b as u8]), pixels.iter().map(|(x, y, _)| (*x as i32, *y as i32)).collect()));
-                }
+                let len = pixels.len() as f32;
+                average_r /= len;
+                average_g /= len;
+                average_b /= len;
+                custom_draw_batches.push((*Rgb::from_slice(&[average_r as u8, average_g as u8, average_b as u8]), pixels.iter().rev().map(|(x, y, _)| (*x as i32, *y as i32)).collect()));
             }
         }
         let mut final_instructions = vec![
@@ -300,8 +282,8 @@ impl Artist {
         }
     }
 
-    pub fn paint(&mut self, tolerance: f32, color_limit: ColorLimit) {
-        let (instructions, init_colors, background) = self.paint_preprocess(tolerance, color_limit);
+    pub fn paint(&mut self) {
+        let (instructions, init_colors, background) = self.paint_preprocess();
         self.paint_from_preprocess(instructions, init_colors, background);
     }
 
