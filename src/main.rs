@@ -1,15 +1,15 @@
 use std::{collections::HashMap, env::args, fs::File, io::BufReader, thread::sleep, time::Duration};
 use device_query::{DeviceQuery, DeviceState, Keycode};
 use enigo::{Key, KeyboardControllable, MouseButton, MouseControllable};
-use image::{codecs::gif::{GifDecoder, GifEncoder}, imageops::{crop_imm, resize}, AnimationDecoder, Delay, Frame, ImageBuffer, Pixel, Rgb, Rgba};
+use image::{codecs::gif::{GifDecoder, GifEncoder}, imageops::{crop_imm, resize}, AnimationDecoder, Delay, DynamicImage, Frame, GenericImageView, ImageBuffer, Pixel, Rgb, Rgba};
 use xcap::Monitor;
 
 const SMALL_SLEEP_TIME: Duration = Duration::from_millis(5);
 const MEDIUM_SLEEP_TIME: Duration = Duration::from_millis(20);
+const LONG_SLEEP_TIME: Duration = Duration::from_millis(200);
 const DOT_WIDTH_FLOAT: f32 = 5.;
 const DOT_WIDTH: i32 = 5;
 const COLOR_SPACING: i32 = 24;
-const BACKGROUND: i32 = -1;
 
 fn main() {
     let args: Vec<String> = args().collect();
@@ -32,6 +32,7 @@ fn main() {
         let img = image::open(image_path).expect("Could not open image");
         let mut artist = Artist::new(img.into());
         artist.paint(tolerance);
+        sleep(LONG_SLEEP_TIME);
         artist.screenshot().save("out.png").unwrap();
     }
 }
@@ -44,7 +45,7 @@ struct GifArtist {
 
 impl GifArtist {
     fn new(gif: Vec<Frame>, tolerance: f32) -> Self {
-        let artist = Artist::new(gif[0].buffer().clone());
+        let artist = Artist::new(gif[0].buffer().clone().into());
         Self { artist, gif, tolerance }
     }
 
@@ -62,6 +63,7 @@ impl GifArtist {
 
     fn paint_frame(&mut self, left: u32, top: u32, delay: Delay) -> Frame {
         self.artist.paint(self.tolerance);
+        sleep(LONG_SLEEP_TIME);
         let img = self.artist.screenshot();
         Frame::from_parts(img, left, top, delay)
     }
@@ -77,7 +79,7 @@ enum PaintInstruction {
 
 struct Artist {
     enigo: enigo::Enigo,
-    img: ImageBuffer<Rgba<u8>, Vec<u8>>,
+    img: DynamicImage,
     left: i32,
     top: i32,
     black_x: i32,
@@ -85,9 +87,7 @@ struct Artist {
     width: i32,
     height: i32,
     colors: [Rgb<u8>; 20],
-    selected_color: i32,
     canvas_selected: bool,
-    custom_colors: Vec<Rgb<u8>>,
 }
 
 impl Artist {
@@ -118,20 +118,20 @@ impl Artist {
         let horizontal_dots = (painting_width as f32 / DOT_WIDTH_FLOAT).ceil() as i32;
         let vertical_dots = (painting_height as f32 / DOT_WIDTH_FLOAT).ceil() as i32;
         let img = resize(&img, horizontal_dots as u32, vertical_dots as u32, image::imageops::FilterType::Gaussian);
-        Self { enigo, img: img, left, top, black_x, black_y, width: horizontal_dots, height: vertical_dots, colors, selected_color: 0, canvas_selected: false, custom_colors: vec![] }
+        Self { enigo, img: img.into(), left, top, black_x, black_y, width: horizontal_dots, height: vertical_dots, colors, canvas_selected: false }
     }
 
     fn new_image(&mut self, img: ImageBuffer<Rgba<u8>, Vec<u8>>) {
         let img = resize(&img, self.width as u32, self.height as u32, image::imageops::FilterType::Gaussian);
-        self.img = img;
+        self.img = img.into();
     }
 
     fn paint_preprocess(&mut self, tolerance: f32) -> (Vec<PaintInstruction>, Vec<Rgb<u8>>, Rgb<u8>) {
         let mut instructions = vec![];
         let mut init_colors = vec![];
         let mut total_colors: HashMap<Rgb<u8>, i32> = HashMap::new();
-        for color in self.img.pixels() {
-            let blended = blend_with_white(*color);
+        for (_, _, color) in self.img.pixels() {
+            let blended = blend_with_white(color);
             let mut best_match = None;
             let mut best_match_value = f32::INFINITY;
             for (color, _) in total_colors.iter() {
@@ -148,94 +148,53 @@ impl Artist {
             }
         }
         let background = *total_colors.iter().max_by_key(|(_, used)| **used).unwrap().0;
-        let background_index = self.colors.iter().enumerate().find(|(_, x)| x == &&background).map(|(i, _)| i as i32).unwrap_or(BACKGROUND);
-        let mut draw_batches: [Vec<PaintInstruction>; 20] = Default::default();
-        for x in 0..self.width {
-            let mut line_length = 0;
-            let mut line_color = {
-                let color = self.get_color(x, 0);
-                if color == background {
-                    background_index
-                } else {
-                    let (best_match, diff) = self.get_best_preset(color, background, background_index);
-                    if diff > tolerance {
-                        if init_colors.len() != 10 {
-                            self.selected_color = 20 + init_colors.len() as i32;
-                            instructions.push(PaintInstruction::Color(self.selected_color));
-                            init_colors.push(color);
-                        } else {
-                            instructions.push(PaintInstruction::ColorPrecise(color));
-                            self.selected_color = 29;
-                        }
-                        self.custom_colors.push(color);
-                        if self.custom_colors.len() == 11 {
-                            self.custom_colors.remove(0);
-                        }
-                        self.selected_color
-                    } else {
-                        if self.selected_color != best_match && best_match != background_index && best_match >= 20 {
-                            instructions.push(PaintInstruction::Color(best_match));
-                            self.selected_color = best_match;
-                        }
-                        best_match
-                    }
-                }
-            };
-            for y in 0..self.height {
-                let color = self.get_color(x, y);
-                let (best_match, diff) = self.get_best_preset(color, background, background_index);
-                if diff > tolerance {
-                    if line_color != background_index {
-                        if line_color < 20 {
-                            draw_batches[line_color as usize].push(PaintInstruction::Line(x, y - line_length, x, y - 1));
-                        } else {
-                            instructions.push(PaintInstruction::Line(x, y - line_length, x, y - 1));
-                        }
-                    }
-                    if color == background {
-                        line_length = 1;
-                        line_color = background_index;
-                    } else {
-                        if init_colors.len() != 10 {
-                            self.selected_color = 20 + init_colors.len() as i32;
-                            instructions.push(PaintInstruction::Color(self.selected_color));
-                            init_colors.push(color);
-                        } else {
-                            instructions.push(PaintInstruction::ColorPrecise(color));
-                            self.selected_color = 29;
-                        }
-                        self.custom_colors.push(color);
-                        if self.custom_colors.len() == 11 {
-                            self.custom_colors.remove(0);
-                        }
-                        line_length = 1;
-                        line_color = self.selected_color;
-                    }
-                } else {
-                    if line_color == best_match {
-                        line_length += 1;
-                    } else {
-                        if line_color != background_index {
-                            if line_color < 20 {
-                                draw_batches[line_color as usize].push(PaintInstruction::Line(x, y - line_length, x, y - 1));
-                            } else {
-                                instructions.push(PaintInstruction::Line(x, y - line_length, x, y - 1));
-                            }
-                        }
-                        line_length = 1;
-                        line_color = best_match;
-                        if self.selected_color != best_match && line_color != background_index && line_color >= 20 {
-                            instructions.push(PaintInstruction::Color(best_match));
-                            self.selected_color = best_match;
-                        }
-                    }
+        let mut draw_batches: [Vec<(i32, i32)>; 20] = Default::default();
+        let mut custom_draw_batches: Vec<(Rgb<u8>, Vec<(i32, i32)>)> = vec![];
+        let mut pixels: Vec<(u32, u32, Rgb<u8>)> = self.img.pixels().map(|(x, y, color)| (x, y, blend_with_white(color))).filter(|(_, _, color)| {
+            let diff = color_difference(*color, background);
+            diff > tolerance
+        }).collect();
+        for (i, (x, y, color)) in pixels.clone().iter().enumerate().rev() {
+            let mut best_match = 0;
+            let mut best_match_value = f32::INFINITY;
+            for (i, preset) in self.colors.iter().enumerate() {
+                let diff = color_difference(*color, *preset);
+                if diff < best_match_value {
+                    best_match = i;
+                    best_match_value = diff;
                 }
             }
-            if line_color != background_index {
-                if line_color < 20 {
-                    draw_batches[line_color as usize].push(PaintInstruction::Line(x, self.height - line_length, x, self.height - 1));
+            if best_match_value <= tolerance {
+                pixels.remove(i);
+                draw_batches[best_match].push((*x as i32, *y as i32));
+            }
+        }
+        while pixels.len() != 0 {
+            let mut total_colors: HashMap<Rgb<u8>, i32> = HashMap::new();
+            for (_, _, color) in &pixels {
+                let mut best_match = None;
+                let mut best_match_value = f32::INFINITY;
+                for (color_2, _) in total_colors.iter() {
+                    let diff = color_difference(*color, *color_2);
+                    if diff < best_match_value {
+                        best_match = Some(color_2.clone());
+                        best_match_value = diff;
+                    }
+                }
+                if best_match_value > tolerance || best_match == None {
+                    total_colors.insert(*color, 1);
                 } else {
-                    instructions.push(PaintInstruction::Line(x, self.height - line_length, x, self.height - 1));
+                    *total_colors.get_mut(&best_match.unwrap()).unwrap() += 1;
+                }
+            }
+            let most_common = total_colors.iter().max_by_key(|(_, used)| **used).unwrap().0;
+            custom_draw_batches.push((*most_common, vec![]));
+            let index = custom_draw_batches.len() - 1;
+            for (i, (x, y, color)) in pixels.clone().iter().enumerate().rev() {
+                let diff = color_difference(*color, *most_common);
+                if diff <= tolerance {
+                    pixels.remove(i);
+                    custom_draw_batches[index].1.push((*x as i32, *y as i32));
                 }
             }
         }
@@ -243,10 +202,48 @@ impl Artist {
             PaintInstruction::SelectBrush,
             PaintInstruction::SetMaxSize,
         ];
-        for (i, batch) in draw_batches.iter_mut().enumerate() {
+        for (i, batch) in draw_batches.iter().enumerate() {
             if batch.len() != 0 {
                 final_instructions.push(PaintInstruction::Color(i as i32));
-                final_instructions.append(batch);
+                let mut line_length = 0;
+                let mut iter = batch.iter();
+                let (mut line_x, mut line_y) = iter.next().unwrap();
+                for (x, y) in iter {
+                    if *y == line_y && *x == line_x - 1 {
+                        line_length += 1;
+                    } else {
+                        final_instructions.push(PaintInstruction::Line(line_x + line_length, line_y, line_x, line_y));
+                        line_length = 0;
+                    }
+                    line_x = *x;
+                    line_y = *y;
+                }
+                final_instructions.push(PaintInstruction::Line(line_x + line_length, line_y, line_x, line_y));
+            }
+        }
+        for (color, batch) in custom_draw_batches {
+            if batch.len() != 0 {
+                if init_colors.len() != 10 {
+                    let color_index = 20 + init_colors.len() as i32;
+                    final_instructions.push(PaintInstruction::Color(color_index));
+                    init_colors.push(color);
+                } else {
+                    final_instructions.push(PaintInstruction::ColorPrecise(color));
+                }
+                let mut line_length = 0;
+                let mut iter = batch.iter();
+                let (mut line_x, mut line_y) = iter.next().unwrap();
+                for (x, y) in iter {
+                    if *y == line_y && *x == line_x - 1 {
+                        line_length += 1;
+                    } else {
+                        final_instructions.push(PaintInstruction::Line(line_x + line_length, line_y, line_x, line_y));
+                        line_length = 0;
+                    }
+                    line_x = *x;
+                    line_y = *y;
+                }
+                final_instructions.push(PaintInstruction::Line(line_x + line_length, line_y, line_x, line_y));
             }
         }
         final_instructions.append(&mut instructions);
@@ -327,42 +324,6 @@ impl Artist {
         let (end_x, end_y) = (end_x * DOT_WIDTH + self.left, end_y * DOT_WIDTH + self.top);
         self.drag(start_x, start_y, end_x, end_y);
         self.click(start_x, start_y - 20);
-    }
-
-    fn get_color(&self, x: i32, y: i32) -> Rgb<u8> {
-        let color: Rgba<u8> = *self.img.get_pixel(x as u32, y as u32);
-        if color.0[3] == 0 {
-            self.colors[10]
-        } else if color.0[3] != 255 {
-            blend_with_white(color)
-        } else {
-            color.to_rgb()
-        }
-    }
-
-    fn get_best_preset(&self, color: Rgb<u8>, background: Rgb<u8>, background_index: i32) -> (i32, f32) {
-        let mut best_match: i32 = 0;
-        let mut best_match_value = f32::INFINITY;
-        for (i, preset) in self.colors.iter().enumerate() {
-            let diff = color_difference(color, *preset);
-            if diff < best_match_value {
-                best_match = i as i32;
-                best_match_value = diff;
-            }
-        }
-        for (i, preset) in self.custom_colors.iter().enumerate() {
-            let diff = color_difference(color, *preset);
-            if diff < best_match_value {
-                best_match = i as i32 + 20;
-                best_match_value = diff;
-            }
-        }
-        let diff = color_difference(color, background);
-        if diff < best_match_value {
-            best_match = background_index;
-            best_match_value = diff;
-        }
-        (best_match, best_match_value)
     }
 
     fn select_color(&mut self, color_index: i32) {
