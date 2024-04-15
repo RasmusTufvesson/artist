@@ -1,7 +1,10 @@
-use std::{collections::HashMap, thread::sleep, time::Duration};
 use device_query::{DeviceQuery, DeviceState, Keycode};
 use enigo::{Key, KeyboardControllable, MouseButton, MouseControllable};
-use image::{imageops::{crop_imm, resize}, Delay, DynamicImage, Frame, GenericImageView, ImageBuffer, Pixel, Rgb, Rgba};
+use image::{
+    imageops::{crop_imm, resize},
+    Delay, DynamicImage, Frame, GenericImageView, ImageBuffer, Pixel, Rgb, Rgba,
+};
+use std::{collections::HashMap, thread::sleep, time::Duration};
 use xcap::Monitor;
 
 const SMALL_SLEEP_TIME: Duration = Duration::from_millis(5);
@@ -42,7 +45,7 @@ impl GifArtist {
 }
 
 enum PaintInstruction {
-    Line(Vec<(i32, i32)>),
+    Line(i32, i32, i32, i32),
     Color(i32),
     ColorPrecise(Rgb<u8>),
     SetMaxSize,
@@ -74,13 +77,28 @@ pub struct Artist {
 
 impl Artist {
     pub fn new(img: ImageBuffer<Rgba<u8>, Vec<u8>>, tolerance: f32, color_limit: usize) -> Self {
-        let colors = [*Rgb::from_slice(&[0,0,0]), *Rgb::from_slice(&[127,127,127]), *Rgb::from_slice(&[136,0,21]),
-                                     *Rgb::from_slice(&[237,28,36]), *Rgb::from_slice(&[255,127,39]), *Rgb::from_slice(&[255,242,0]),
-                                     *Rgb::from_slice(&[34,177,76]), *Rgb::from_slice(&[0,162,232]), *Rgb::from_slice(&[63,72,204]),
-                                     *Rgb::from_slice(&[163,73,164]), *Rgb::from_slice(&[255,255,255]), *Rgb::from_slice(&[195,195,195]),
-                                     *Rgb::from_slice(&[185,122,87]), *Rgb::from_slice(&[255,174,201]), *Rgb::from_slice(&[255,201,14]),
-                                     *Rgb::from_slice(&[239,228,176]), *Rgb::from_slice(&[181,230,29]), *Rgb::from_slice(&[153,217,234]),
-                                     *Rgb::from_slice(&[112,146,190]), *Rgb::from_slice(&[200,191,231])];
+        let colors = [
+            *Rgb::from_slice(&[0, 0, 0]),
+            *Rgb::from_slice(&[127, 127, 127]),
+            *Rgb::from_slice(&[136, 0, 21]),
+            *Rgb::from_slice(&[237, 28, 36]),
+            *Rgb::from_slice(&[255, 127, 39]),
+            *Rgb::from_slice(&[255, 242, 0]),
+            *Rgb::from_slice(&[34, 177, 76]),
+            *Rgb::from_slice(&[0, 162, 232]),
+            *Rgb::from_slice(&[63, 72, 204]),
+            *Rgb::from_slice(&[163, 73, 164]),
+            *Rgb::from_slice(&[255, 255, 255]),
+            *Rgb::from_slice(&[195, 195, 195]),
+            *Rgb::from_slice(&[185, 122, 87]),
+            *Rgb::from_slice(&[255, 174, 201]),
+            *Rgb::from_slice(&[255, 201, 14]),
+            *Rgb::from_slice(&[239, 228, 176]),
+            *Rgb::from_slice(&[181, 230, 29]),
+            *Rgb::from_slice(&[153, 217, 234]),
+            *Rgb::from_slice(&[112, 146, 190]),
+            *Rgb::from_slice(&[200, 191, 231]),
+        ];
         let enigo = enigo::Enigo::new();
         let state = device_query::DeviceState::new();
         wait_for_keyup(Keycode::LControl, &state);
@@ -99,12 +117,35 @@ impl Artist {
         let painting_height = bottom - top;
         let horizontal_dots = (painting_width as f32 / DOT_WIDTH_FLOAT).ceil() as i32;
         let vertical_dots = (painting_height as f32 / DOT_WIDTH_FLOAT).ceil() as i32;
-        let img = resize(&img, horizontal_dots as u32, vertical_dots as u32, image::imageops::FilterType::Gaussian);
-        Self { enigo, img: img.into(), left, top, black_x, black_y, width: horizontal_dots, height: vertical_dots, colors, canvas_selected: false, tolerance, color_limit }
+        let img = resize(
+            &img,
+            horizontal_dots as u32,
+            vertical_dots as u32,
+            image::imageops::FilterType::Gaussian,
+        );
+        Self {
+            enigo,
+            img: img.into(),
+            left,
+            top,
+            black_x,
+            black_y,
+            width: horizontal_dots,
+            height: vertical_dots,
+            colors,
+            canvas_selected: false,
+            tolerance,
+            color_limit,
+        }
     }
 
     fn new_image(&mut self, img: ImageBuffer<Rgba<u8>, Vec<u8>>) {
-        let img = resize(&img, self.width as u32, self.height as u32, image::imageops::FilterType::Gaussian);
+        let img = resize(
+            &img,
+            self.width as u32,
+            self.height as u32,
+            image::imageops::FilterType::Gaussian,
+        );
         self.img = img.into();
     }
 
@@ -129,13 +170,22 @@ impl Artist {
                 *total_colors.get_mut(&best_match.unwrap()).unwrap() += 1;
             }
         }
-        let background = *total_colors.iter().max_by_key(|(_, used)| **used).unwrap().0;
+        let background = *total_colors
+            .iter()
+            .max_by_key(|(_, used)| **used)
+            .unwrap()
+            .0;
         let mut draw_batches: [Vec<(i32, i32)>; 20] = Default::default();
         let mut custom_draw_batches: Vec<(Rgb<u8>, Vec<(i32, i32)>)> = vec![];
-        let mut pixels: Vec<(u32, u32, Rgb<u8>)> = self.img.pixels().map(|(x, y, color)| (x, y, blend_with_white(color))).filter(|(_, _, color)| {
-            let diff = color_difference(*color, background);
-            diff > self.tolerance
-        }).collect();
+        let mut pixels: Vec<(u32, u32, Rgb<u8>)> = self
+            .img
+            .pixels()
+            .map(|(x, y, color)| (x, y, blend_with_white(color)))
+            .filter(|(_, _, color)| {
+                let diff = color_difference(*color, background);
+                diff > self.tolerance
+            })
+            .collect();
         if self.color_limit == 0 {
             for (x, y, color) in pixels.iter().rev() {
                 let mut best_match = 0;
@@ -149,7 +199,7 @@ impl Artist {
                 }
                 draw_batches[best_match].push((*x as i32, *y as i32));
             }
-        } else  {
+        } else {
             for (i, (x, y, color)) in pixels.clone().iter().enumerate().rev() {
                 let mut best_match = 0;
                 let mut best_match_value = f32::INFINITY;
@@ -183,7 +233,11 @@ impl Artist {
                         *total_colors.get_mut(&best_match.unwrap()).unwrap() += 1;
                     }
                 }
-                let most_common = total_colors.iter().max_by_key(|(_, used)| **used).unwrap().0;
+                let most_common = total_colors
+                    .iter()
+                    .max_by_key(|(_, used)| **used)
+                    .unwrap()
+                    .0;
                 custom_draw_batches.push((*most_common, vec![]));
                 let index = custom_draw_batches.len() - 1;
                 for (i, (x, y, color)) in pixels.clone().iter().enumerate().rev() {
@@ -219,15 +273,15 @@ impl Artist {
                     if best_match < 20 {
                         draw_batches[best_match].push((x as i32, y as i32));
                     } else {
-                        custom_draw_batches[best_match].1.push((x as i32, y as i32));
+                        custom_draw_batches[best_match - 20]
+                            .1
+                            .push((x as i32, y as i32));
                     }
                 }
             }
         }
-        let mut final_instructions = vec![
-            PaintInstruction::SelectBrush,
-            PaintInstruction::SetMaxSize,
-        ];
+        let mut final_instructions =
+            vec![PaintInstruction::SelectBrush, PaintInstruction::SetMaxSize];
         for (i, batch) in draw_batches.iter_mut().enumerate() {
             if batch.len() != 0 {
                 final_instructions.push(PaintInstruction::Color(i as i32));
@@ -256,7 +310,7 @@ impl Artist {
         let mut instructions = vec![];
         while points.len() != 0 {
             let (mut last_x, mut last_y) = points.remove(0);
-            let mut line = vec![(last_x, last_y)];
+            let (first_x, first_y) = (last_x, last_y);
             let mut direction = Direction::Left;
             let mut can_continue = false;
             let mut continue_index = 0;
@@ -288,54 +342,56 @@ impl Artist {
             while can_continue && points.len() != 0 {
                 (last_x, last_y) = points.remove(continue_index);
                 can_continue = false;
-                for (i, (x, y)) in points.iter().enumerate() {
-                    if direction != Direction::Right && *x == last_x - 1 && *y == last_y {
-                        if direction != Direction::Left {
-                            direction = Direction::Left;
-                            line.push((last_x, last_y));
+                match direction {
+                    Direction::Left => {
+                        for (i, (x, y)) in points.iter().enumerate() {
+                            if *x == last_x - 1 && *y == last_y {
+                                continue_index = i;
+                                can_continue = true;
+                                break;
+                            }
                         }
-                        continue_index = i;
-                        can_continue = true;
-                        break;
                     }
-                    if direction != Direction::Left && *x == last_x + 1 && *y == last_y {
-                        if direction != Direction::Right {
-                            direction = Direction::Right;
-                            line.push((last_x, last_y));
+                    Direction::Right => {
+                        for (i, (x, y)) in points.iter().enumerate() {
+                            if *x == last_x + 1 && *y == last_y {
+                                continue_index = i;
+                                can_continue = true;
+                                break;
+                            }
                         }
-                        continue_index = i;
-                        can_continue = true;
-                        break;
                     }
-                    if direction != Direction::Down && *y == last_y - 1 && *x == last_x {
-                        if direction != Direction::Up {
-                            direction = Direction::Up;
-                            line.push((last_x, last_y));
+                    Direction::Up => {
+                        for (i, (x, y)) in points.iter().enumerate() {
+                            if *x == last_x && *y == last_y - 1 {
+                                continue_index = i;
+                                can_continue = true;
+                                break;
+                            }
                         }
-                        continue_index = i;
-                        can_continue = true;
-                        break;
                     }
-                    if direction != Direction::Up && *y == last_y + 1 && *x == last_x {
-                        if direction != Direction::Down {
-                            direction = Direction::Down;
-                            line.push((last_x, last_y));
+                    Direction::Down => {
+                        for (i, (x, y)) in points.iter().enumerate() {
+                            if *x == last_x && *y == last_y + 1 {
+                                continue_index = i;
+                                can_continue = true;
+                                break;
+                            }
                         }
-                        continue_index = i;
-                        can_continue = true;
-                        break;
                     }
                 }
             }
-            if line[0] != (last_x, last_y) {
-                line.push((last_x, last_y));
-            }
-            instructions.push(PaintInstruction::Line(line));
+            instructions.push(PaintInstruction::Line(first_x, first_y, last_x, last_y));
         }
         instructions
     }
 
-    fn paint_from_preprocess(&mut self, instructions: Vec<PaintInstruction>, init_colors: Vec<Rgb<u8>>, background: Rgb<u8>) {
+    fn paint_from_preprocess(
+        &mut self,
+        instructions: Vec<PaintInstruction>,
+        init_colors: Vec<Rgb<u8>>,
+        background: Rgb<u8>,
+    ) {
         self.click(self.left, self.top);
         shortcut(&[Key::Control, Key::A], &mut self.enigo);
         self.enigo.key_click(Key::Delete);
@@ -354,7 +410,9 @@ impl Artist {
         }
         for instruction in instructions {
             match instruction {
-                PaintInstruction::Line(positions) => self.draw_line(positions),
+                PaintInstruction::Line(start_x, start_y, end_x, end_y) => {
+                    self.draw_line(start_x, start_y, end_x, end_y)
+                }
                 PaintInstruction::Color(index) => self.select_color(index),
                 PaintInstruction::ColorPrecise(color) => self.select_color_precise(color, false),
                 PaintInstruction::SelectBrush => self.select_brush(),
@@ -372,7 +430,14 @@ impl Artist {
         sleep(LONG_SLEEP_TIME);
         let monitor = Monitor::from_point(self.left, self.top).unwrap();
         let img = monitor.capture_image().unwrap();
-        crop_imm(&img, self.left as u32, self.top as u32, (self.width * DOT_WIDTH - 1) as u32, (self.height * DOT_WIDTH - 2) as u32).to_image()
+        crop_imm(
+            &img,
+            self.left as u32,
+            self.top as u32,
+            (self.width * DOT_WIDTH - 1) as u32,
+            (self.height * DOT_WIDTH - 2) as u32,
+        )
+        .to_image()
     }
 
     fn click(&mut self, x: i32, y: i32) {
@@ -395,44 +460,24 @@ impl Artist {
         }
     }
 
-    fn drag_complex(&mut self, positions: Vec<(i32, i32)>) {
-        let (x, y) = positions[0];
-        self.enigo.mouse_move_to(x, y);
-        self.enigo.mouse_down(MouseButton::Left);
-        sleep(SMALL_SLEEP_TIME);
-        if self.enigo.mouse_location() != (x, y) {
-            panic!("Movement detected while dragging");
-        }
-        for i in 1..positions.len()-1 {
-            let (x, y) = positions[i];
-            self.enigo.mouse_move_to(x, y);
-            self.enigo.mouse_up(MouseButton::Left);
-            sleep(SMALL_SLEEP_TIME);
-            if self.enigo.mouse_location() != (x, y) {
-                panic!("Movement detected while dragging");
-            }
-            self.enigo.mouse_down(MouseButton::Left);
-        }
-        let (x, y) = positions[positions.len()-1];
-        self.enigo.mouse_move_to(x, y);
-        self.enigo.mouse_up(MouseButton::Left);
-        sleep(SMALL_SLEEP_TIME);
-        if self.enigo.mouse_location() != (x, y) {
-            panic!("Movement detected after dragging");
-        }
-    }
-
-    fn draw_line(&mut self, positions: Vec<(i32, i32)>) {
-        let positions: Vec<(i32, i32)> = positions.iter().map(|(x, y)| (*x * DOT_WIDTH + self.left, *y * DOT_WIDTH + self.top)).collect();
+    fn draw_line(&mut self, start_x: i32, start_y: i32, end_x: i32, end_y: i32) {
+        let (start_x, start_y) = (
+            start_x * DOT_WIDTH + self.left,
+            start_y * DOT_WIDTH + self.top,
+        );
+        let (end_x, end_y) = (end_x * DOT_WIDTH + self.left, end_y * DOT_WIDTH + self.top);
         if !self.canvas_selected {
-            self.click(positions[0].0, positions[0].1);
+            self.click(start_x, start_y);
             self.canvas_selected = true;
         }
-        self.drag_complex(positions);
+        self.drag(start_x, start_y, end_x, end_y);
     }
 
     fn draw_square(&mut self, start_x: i32, start_y: i32, end_x: i32, end_y: i32) {
-        let (start_x, start_y) = (start_x * DOT_WIDTH + self.left + 2, start_y * DOT_WIDTH + self.top + 2);
+        let (start_x, start_y) = (
+            start_x * DOT_WIDTH + self.left + 2,
+            start_y * DOT_WIDTH + self.top + 2,
+        );
         let (end_x, end_y) = (end_x * DOT_WIDTH + self.left, end_y * DOT_WIDTH + self.top);
         self.drag(start_x, start_y, end_x, end_y);
         self.click(start_x, start_y - 20);
@@ -463,7 +508,10 @@ impl Artist {
             self.enigo.key_click(Key::Tab);
         }
         shortcut(&[Key::Control, Key::A], &mut self.enigo);
-        self.enigo.key_sequence(&format!("#{:02X?}{:02X?}{:02X?}", color.0[0], color.0[1], color.0[2]));
+        self.enigo.key_sequence(&format!(
+            "#{:02X?}{:02X?}{:02X?}",
+            color.0[0], color.0[1], color.0[2]
+        ));
         for _ in 0..8 {
             self.enigo.key_click(Key::Tab);
         }
@@ -510,7 +558,10 @@ impl Artist {
 }
 
 fn color_difference(color_1: Rgb<u8>, color_2: Rgb<u8>) -> f32 {
-    ((color_1.0[0] as f32 - color_2.0[0] as f32).abs() + (color_1.0[1] as f32 - color_2.0[1] as f32).abs() + (color_1.0[2] as f32 - color_2.0[2] as f32).abs()).sqrt()
+    ((color_1.0[0] as f32 - color_2.0[0] as f32).abs()
+        + (color_1.0[1] as f32 - color_2.0[1] as f32).abs()
+        + (color_1.0[2] as f32 - color_2.0[2] as f32).abs())
+    .sqrt()
 }
 
 fn blend_with_white(color: Rgba<u8>) -> Rgb<u8> {
